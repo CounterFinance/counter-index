@@ -8,12 +8,13 @@ OpKit ships two source implementations and a smart factory that picks the best o
 
 ## Comparison
 
-| | `DbEventSource` | `RpcEventSource` |
-|---|---|---|
-| Requires | OpStream-ready SQLite or Postgres | Any OPNET RPC endpoint |
-| Backfill speed | Sub-millisecond (single SQL query) | O(N) `getBlock` calls |
-| Context richness | Full — tx fields + block JOINs | Full — RPC tx fields |
-| Best for | Production, full-history backfills | Lightweight indexers, no OpStream |
+| | `DbEventSource` | `WsEventSource` | `RpcEventSource` |
+|---|---|---|---|
+| Requires | OpStream-ready SQLite or Postgres | OpStream WebSocket broadcast | Any OPNET RPC endpoint |
+| Backfill speed | Sub-millisecond (single SQL query) | ❌ Live-only | O(N) `getBlock` calls |
+| Live latency | ~10 s poll interval | Sub-second push | ~10 s poll interval |
+| Context richness | Full — tx fields + block JOINs | Full — 15-field enriched payload | Full — RPC tx fields |
+| Best for | Production, full-history backfills | Low-latency live indexers | Lightweight indexers, no OpStream |
 
 ---
 
@@ -47,6 +48,80 @@ const indexer = await createIndexer({ schema, sink, source });
 
 Source and sink can be the same Postgres instance — OpKit's `opkit_` table prefix prevents
 collisions with OpStream's raw tables.
+
+---
+
+## WsEventSource
+
+Connects to OpStream's WebSocket broadcast server. Events arrive fully enriched — all 15 fields
+populated — with sub-second latency. No DB reads, no RPC calls.
+
+```ts
+import { WsEventSource } from '@opnet-devs/opkit';
+
+const source = new WsEventSource('ws://localhost:8080');
+```
+
+Requires the `ws` peer dependency:
+
+```bash
+npm install ws
+```
+
+### Live-only
+
+`WsEventSource` cannot backfill historical blocks — it only sees events as they are broadcast.
+For full-history indexers, pair it with `DbEventSource` for backfill and switch to `WsEventSource`
+for live subscriptions (wire them separately in your `main.ts`):
+
+```ts
+import { DbEventSource, WsEventSource, openSqlite } from '@opnet-devs/opkit';
+
+// Backfill via SQL — instant
+const dbSource = new DbEventSource(openSqlite('/data/opstream.db'));
+await indexer.sync(fromBlock, latestBlock, { source: dbSource });
+
+// Live via WebSocket — sub-second latency
+const wsSource = new WsEventSource('ws://localhost:8080');
+indexer.subscribe(latestBlock + 1, { source: wsSource });
+```
+
+### Options
+
+```ts
+interface WsEventSourceOptions {
+  reconnectDelayMs?:    number; // Base delay on disconnect. Default: 1000
+  maxReconnectDelayMs?: number; // Backoff ceiling. Default: 30 000
+}
+```
+
+Reconnection uses exponential backoff: delay doubles on each failure up to `maxReconnectDelayMs`,
+then resets to `reconnectDelayMs` on a successful open.
+
+### Decoder priority
+
+When an event arrives, OpKit tries its registered decoders first (from the raw `eventRaw` bytes).
+If no decoder is registered for the event name, it falls back to OpStream's `decodedJson` field.
+This keeps OpKit's decoder registry as the source of truth — register a custom decoder with
+`registerDecoder()` and it will always win over OpStream's version.
+
+### No server-side filtering
+
+OpStream broadcasts every event to all connected clients. Filtering by contract address or event
+name must be done inside your handlers. Use `fromBlock` on `subscribe()` to skip events from
+blocks before your start point.
+
+### `createEventSource` integration
+
+Pass `ws` as the Tier 2 option. It is chosen after the DB probe fails and before RPC:
+
+```ts
+const source = await createEventSource({
+  db:  '/data/opstream.db',           // Tier 1 — try OpStream DB first
+  ws:  'ws://localhost:8080',         // Tier 2 — WS if DB not ready
+  rpc: new JSONRpcProvider('...'),    // Tier 3 — RPC as last resort
+});
+```
 
 ---
 

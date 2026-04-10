@@ -24,13 +24,25 @@ Opnet-devs/
 
 ## Scaffold a new indexer
 
-The `just scaffold` command generates a complete starter project next to OpKit:
+The fastest way to start is `npx @opnet-devs/opkit init`:
+
+```bash
+npx @opnet-devs/opkit init my-indexer
+# Creates my-indexer/ in the current directory with:
+#   package.json, tsconfig.json, .gitignore, .env.example
+#   src/main.ts, src/handlers/transfers.ts
+#   Dockerfile, docker-compose.yml
+cd my-indexer && npm install && npm run dev
+```
+
+No monorepo required — works anywhere Node ≥ 22 and npx are available.
+
+If you are working inside the OpKit monorepo, the `just scaffold` command does the same thing:
 
 ```bash
 cd OpKit
 just scaffold my-indexer
-# Creates ../my-indexer/ with package.json, tsconfig.json, Dockerfile, docker-compose.yml,
-# src/main.ts, and src/handlers/transfers.ts — ready to run.
+# Creates ../my-indexer/ — identical output
 ```
 
 ## Dockerfile

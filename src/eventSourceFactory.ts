@@ -4,7 +4,7 @@
  * Give it what you have; it probes and picks the fastest available engine:
  *
  *   Tier 1 — DbEventSource   (OpStream-ready DB present → sub-millisecond SQL)
- *   Tier 2 — (future)         OpStream RPC / WebSocket endpoint
+ *   Tier 2 — WsEventSource   (OpStream WebSocket broadcast → sub-second latency)
  *   Tier 3 — RpcEventSource  (plain OPNET getBlock loop — O(N), always works)
  *
  * Usage:
@@ -13,6 +13,9 @@
  *     db:  'data/opstream.db',
  *     rpc: new JSONRpcProvider('https://mainnet.opnet.org'),
  *   });
+ *
+ *   // DB + WS (backfill via DB, live via WS — caller wires them separately):
+ *   const source = await createEventSource({ db: adapter, ws: 'ws://localhost:8080' });
  *
  *   // DB only (throws if not OpStream-ready):
  *   const source = await createEventSource({ db: adapter });
@@ -27,6 +30,7 @@ import type { EventSource } from './source.js';
 import { DbEventSource } from './source.js';
 import type { BlockProvider, RpcEventSourceOptions } from './rpcSource.js';
 import { RpcEventSource } from './rpcSource.js';
+import { WsEventSource, type WsEventSourceOptions } from './wsSource.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -35,19 +39,29 @@ import { RpcEventSource } from './rpcSource.js';
 export interface CreateEventSourceOptions {
   /** Options forwarded to RpcEventSource when it is chosen. */
   rpcOptions?: RpcEventSourceOptions;
+  /** Options forwarded to WsEventSource when it is chosen. */
+  wsOptions?: WsEventSourceOptions;
 }
 
 export interface EventSourceInput {
   /**
    * Path to an OpStream-ready SQLite file OR a pre-opened MinimalDbAdapter
    * (sqlite or postgres). Probed first — if the three OpStream tables are
-   * present, returns DbEventSource (fast). Otherwise warns and falls back to rpc.
+   * present, returns DbEventSource (fast). Otherwise warns and falls back.
    */
   db?: string | MinimalDbAdapter;
 
   /**
+   * OpStream WebSocket broadcast URL (e.g. 'ws://localhost:8080').
+   * Tier 2 — chosen over RPC when present, but after DB probe fails.
+   * WsEventSource is live-only; pass `db` as well for backfill support.
+   */
+  ws?: string;
+
+  /**
    * OPNET RPC provider (e.g. opnet SDK's JSONRpcProvider). Used when db is
-   * absent or the schema probe fails. Triggers Tier-3 getBlock loop.
+   * absent or the schema probe fails and no ws URL is provided.
+   * Triggers Tier-3 getBlock loop.
    */
   rpc?: BlockProvider;
 }
@@ -75,18 +89,23 @@ export async function createEventSource(
     }
 
     // DB exists but is not OpStream-ready
-    if (!input.rpc) {
+    if (!input.ws && !input.rpc) {
       throw new Error(
         '[OpKit] createEventSource: the provided database is not OpStream-ready ' +
         '(missing events / transactions / blocks tables). ' +
-        'Either point at an OpStream database or provide an rpc fallback.',
+        'Either point at an OpStream database or provide a ws URL / rpc fallback.',
       );
     }
 
     console.warn(
       '[OpKit] createEventSource: database is not OpStream-ready — ' +
-      'falling back to RpcEventSource.',
+      `falling back to ${input.ws ? 'WsEventSource' : 'RpcEventSource'}.`,
     );
+  }
+
+  // ── Tier 2: OpStream WebSocket broadcast ─────────────────────────────────
+  if (input.ws) {
+    return new WsEventSource(input.ws, options?.wsOptions);
   }
 
   // ── Tier 3: RPC fallback ──────────────────────────────────────────────────
@@ -96,7 +115,7 @@ export async function createEventSource(
 
   throw new Error(
     '[OpKit] createEventSource: no valid source provided. ' +
-    'Pass a db path/adapter, an rpc BlockProvider, or both.',
+    'Pass a db path/adapter, a ws URL, an rpc BlockProvider, or a combination.',
   );
 }
 

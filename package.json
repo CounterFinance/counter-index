@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "bin": {
+    "opkit": "bin/opkit.js"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*"

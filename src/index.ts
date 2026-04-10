@@ -39,6 +39,11 @@ export {
 } from './rpcSource.js';
 
 export {
+  WsEventSource,
+  type WsEventSourceOptions,
+} from './wsSource.js';
+
+export {
   createEventSource,
   probeOpStreamSchema,
   type EventSourceInput,

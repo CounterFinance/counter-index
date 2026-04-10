@@ -1,0 +1,236 @@
+#!/usr/bin/env node
+/**
+ * opkit CLI — scaffold a new OpKit indexer project.
+ *
+ * Usage:
+ *   npx @opnet-devs/opkit init [project-name]
+ *
+ * Generates a ready-to-run starter project in ./<project-name>/ next to wherever
+ * the command is run from. Refuses to write into a non-empty directory.
+ */
+
+import { mkdirSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, resolve, basename } from 'node:path';
+import { cwd, argv, exit } from 'node:process';
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+const [,, command, ...rest] = argv;
+
+if (command !== 'init') {
+  console.error(`Usage: opkit init [project-name]`);
+  exit(1);
+}
+
+const projectName = rest[0] ?? basename(cwd());
+const projectDir  = resolve(cwd(), projectName);
+
+if (existsSync(projectDir)) {
+  const entries = readdirSync(projectDir);
+  if (entries.length > 0) {
+    console.error(`[opkit] Error: directory "${projectDir}" is not empty.`);
+    console.error('  Choose a different project name or empty the directory first.');
+    exit(1);
+  }
+}
+
+console.log(`[opkit] Scaffolding new indexer: ${projectName}`);
+console.log(`[opkit] Writing to: ${projectDir}\n`);
+
+// ---------------------------------------------------------------------------
+// File templates
+// ---------------------------------------------------------------------------
+
+const files = {
+  'package.json': `{
+  "name": "${projectName}",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "start": "node --import tsx/esm src/main.ts",
+    "dev":   "node --import tsx/esm --watch src/main.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@opnet-devs/opkit": "^0.1.0",
+    "opnet": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
+`,
+
+  'tsconfig.json': `{
+  "compilerOptions": {
+    "target":      "ES2022",
+    "module":      "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict":      true,
+    "outDir":      "dist",
+    "rootDir":     "src"
+  },
+  "include": ["src"]
+}
+`,
+
+  '.gitignore': `node_modules/
+dist/
+*.db
+.env
+`,
+
+  '.env.example': `OPSTREAM_DB_PATH=/data/opstream.db
+OPKIT_DB_PATH=/data/opkit.db
+OPSTREAM_WS_URL=ws://localhost:8080
+FROM_BLOCK=941400
+PORT=4000
+`,
+
+  'Dockerfile': `# Build context: parent directory of ${projectName}
+# docker build -f ${projectName}/Dockerfile -t ${projectName} ..
+
+FROM node:22-alpine
+RUN apk add --no-cache dumb-init
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --omit=dev
+
+COPY src ./src
+
+RUN addgroup -S opkit && adduser -S opkit -G opkit
+USER opkit
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "--import", "tsx/esm", "src/main.ts"]
+`,
+
+  'docker-compose.yml': `services:
+  opstream:
+    image: ghcr.io/opnet-devs/opstream:latest
+    volumes:
+      - chain_data:/data
+    environment:
+      - OPSTREAM_DB_PATH=/data/opstream.db
+
+  indexer:
+    build: .
+    volumes:
+      - chain_data:/data
+    environment:
+      - OPSTREAM_DB_PATH=/data/opstream.db
+      - OPKIT_DB_PATH=/data/opkit.db
+      - FROM_BLOCK=941400
+      - PORT=4000
+    ports:
+      - "4000:4000"
+    depends_on:
+      - opstream
+
+volumes:
+  chain_data:
+`,
+
+  'src/main.ts': `import {
+  defineSchema, createIndexer,
+  DbEventSource, openSqlite,
+} from '@opnet-devs/opkit';
+import { registerTransferHandlers } from './handlers/transfers.js';
+
+const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '/data/opstream.db';
+const OPKIT_DB   = process.env['OPKIT_DB_PATH']    ?? '/data/opkit.db';
+const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? '941400');
+const PORT        = Number(process.env['PORT']        ?? '4000');
+
+const schema = defineSchema({
+  Account: {
+    address:  { type: 'string' },
+    balance:  { type: 'bigint' },
+    txCount:  { type: 'int' },
+    lastSeen: { type: 'int' },
+  },
+  Transfer: {
+    txHash: { type: 'string' },
+    from:   { type: 'string' },
+    to:     { type: 'string' },
+    value:  { type: 'bigint' },
+    block:  { type: 'int' },
+  },
+});
+
+const source  = new DbEventSource(openSqlite(OPSTREAM_DB));
+const sink    = openSqlite(OPKIT_DB);
+const indexer = await createIndexer({ schema, sink, source });
+
+registerTransferHandlers(indexer);
+
+const latestBlock = FROM_BLOCK + 58_600; // adjust to your backfill range
+await indexer.sync(FROM_BLOCK, latestBlock);
+indexer.subscribe(latestBlock + 1);
+
+const handle = await indexer.serve({ port: PORT, subscriptions: false });
+console.log(\`GraphQL ready at \${handle.url}\`);
+
+process.on('SIGTERM', async () => {
+  await handle.stop();
+  process.exit(0);
+});
+`,
+
+  'src/handlers/transfers.ts': `import type { Indexer } from '@opnet-devs/opkit';
+
+export function registerTransferHandlers(indexer: Indexer): void {
+  indexer.on('Transferred', async (event, ctx) => {
+    const from  = event.decoded!['from']  as string;
+    const to    = event.decoded!['to']    as string;
+    const value = BigInt(event.decoded!['value'] as string);
+
+    await ctx.store.set('Transfer', event.txHash, {
+      txHash: event.txHash, from, to, value, block: event.blockNumber,
+    });
+
+    for (const [addr, delta] of [[from, -value], [to, value]] as [string, bigint][]) {
+      const acct = await ctx.store.get('Account', addr);
+      if (!acct) {
+        await ctx.store.set('Account', addr, {
+          address: addr, balance: delta, txCount: 1, lastSeen: event.blockNumber,
+        });
+      } else {
+        await ctx.store.update('Account', addr, {
+          balance:  (acct['balance']  as bigint) + delta,
+          txCount:  (acct['txCount']  as number) + 1,
+          lastSeen: event.blockNumber,
+        });
+      }
+    }
+  });
+}
+`,
+};
+
+// ---------------------------------------------------------------------------
+// Write files
+// ---------------------------------------------------------------------------
+
+for (const [relativePath, content] of Object.entries(files)) {
+  const fullPath = join(projectDir, relativePath);
+  const dir = fullPath.slice(0, fullPath.lastIndexOf('/'));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(fullPath, content, 'utf8');
+  console.log(`  created  ${relativePath}`);
+}
+
+console.log(`
+Done! Next steps:
+
+  cd ${projectName}
+  npm install
+  # Edit src/main.ts and src/handlers/transfers.ts
+  npm run dev
+`);
