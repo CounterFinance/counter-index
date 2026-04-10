@@ -16,8 +16,26 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "graphql-ws": "^6.0.8",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^1.6.0"
+    "vitest": "^1.6.0",
+    "ws": "^8.20.0"
+  },
+  "dependencies": {
+    "graphql": "^16.13.2"
+  },
+  "peerDependencies": {
+    "graphql-ws": "^5.0.0",
+    "ws": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "graphql-ws": {
+      "optional": true
+    },
+    "ws": {
+      "optional": true
+    }
   }
 }

@@ -1,15 +1,18 @@
 # OpKit
 
 Indexer framework for [OPNET](https://opnet.org) (Bitcoin L2). Define a schema, write async event
-handlers, persist derived state to SQLite or Postgres, query indexed data.
+handlers, persist derived state to SQLite or Postgres, query indexed data over a built-in GraphQL
+API with cursor pagination and optional live subscriptions.
 
 OpKit is to OPNET what [Ponder](https://ponder.sh) is to EVM — TypeScript-native, DB-backed,
-no GraphQL required.
+with auto-generated GraphQL requiring zero codegen.
 
 ```
 OpStream DB ──→ DbEventSource (source) ──→ OpKit handlers ──→ opkit_* tables (sink)
 (blocks/txs/events)                                                  ↓
-                                                           Your app / dashboard
+                                                           indexer.serve()
+                                                                  ↓
+                                          GraphQL API (http + optional ws) ──→ Frontend
 ```
 
 OpKit reads raw chain events from an **OpStream-ready database** (source) and writes derived,
@@ -28,9 +31,9 @@ your-indexer/
   Dockerfile         ← runs main.ts (see OpKit/Dockerfile template)
 ```
 
-**OpKit is Node.js server-side only.** It cannot run in a browser (`node:sqlite`, no FS). Your
-frontend or any HTTP client reads from the `opkit_*` tables OpKit maintains — through a database
-connection or an HTTP API layer you build on top.
+**OpKit is Node.js server-side only.** It cannot run in a browser (`node:sqlite`, no FS).
+Frontends query the indexed data through `indexer.serve()` — a GraphQL HTTP server OpKit starts
+for you, auto-generated from your schema with no configuration required.
 
 ## Requirements
 
@@ -115,6 +118,19 @@ const tx       = await indexer.store.get('Transfer', txHash);
 
 console.log(indexer.stats);
 // { eventsProcessed: 1842, eventsDecoded: 1654, eventsSkipped: 188, lastBlock: 9400 }
+
+// 8. Serve a GraphQL API over the indexed data
+//    GET  /graphql → GraphiQL playground (open in browser)
+//    POST /graphql → execute queries
+//    WS   /graphql → live subscriptions (opt-in, same port)
+const handle = await indexer.serve({
+  port: 4000,
+  subscriptions: true,  // optional — requires: npm install graphql-ws ws
+});
+// → http://localhost:4000/graphql
+// → ws://localhost:4000/graphql  (when subscriptions: true)
+
+await handle.stop(); // graceful shutdown
 ```
 
 ## Core Concepts
@@ -292,6 +308,98 @@ await indexer.processEvent(event);
 await indexer.processEvents(events);
 ```
 
+### GraphQL API (`indexer.serve`)
+
+OpKit generates a GraphQL schema directly from your `defineSchema()` entities — no SDL file,
+no codegen. Call `indexer.serve()` after creating the indexer:
+
+```ts
+const handle = await indexer.serve({ port: 4000 });
+// → http://localhost:4000/graphql
+```
+
+**GET /graphql** serves a GraphiQL playground (CDN-hosted, zero extra files).
+**POST /graphql** executes queries.
+
+One query pair is generated per entity. For a `Pool` entity:
+
+```graphql
+# Singular — by ID
+pool(id: "pool-1") { id address reserve0 reserve1 fee }
+
+# Plural — cursor-paginated Connection
+pools(
+  where:          { token0: "WBTC", fee_lte: 30, reserve0_gt: "500000" }
+  orderBy:        reserve0
+  orderDirection: desc
+  first:          10
+  after:          "Y3Vyc29y..."   # opaque cursor from a previous pageInfo.endCursor
+) {
+  items { id address reserve0 reserve1 }
+  pageInfo { hasNextPage endCursor }
+  totalCount
+}
+```
+
+**Pagination** follows the cursor Connection pattern:
+
+```graphql
+# Page 1
+pools(first: 10, orderBy: id, orderDirection: asc) {
+  items { id }
+  pageInfo { hasNextPage endCursor }
+  totalCount
+}
+
+# Page 2 — pass endCursor from page 1 as `after`
+pools(first: 10, orderBy: id, orderDirection: asc, after: "<endCursor>") {
+  items { id }
+  pageInfo { hasNextPage endCursor }
+  totalCount
+}
+```
+
+`totalCount` always reflects the full filtered set (not just the current page).
+`hasNextPage: false` means you've reached the end.
+Sorting is stable — ties are broken by id, so cursors are always deterministic.
+
+**Filter operators** per field type:
+
+| Type | Operators |
+|---|---|
+| `string`, `bytes` | (exact), `_not`, `_contains`, `_starts_with`, `_ends_with` |
+| `int`, `float`, `bigint` | (exact), `_not`, `_gt`, `_lt`, `_gte`, `_lte` |
+| `boolean` | (exact), `_not` |
+
+`bigint` values are serialised as decimal strings over the wire (`"1000000"`).
+
+**Subscriptions** (optional — requires peer deps):
+
+```bash
+npm install graphql-ws ws
+```
+
+```ts
+const handle = await indexer.serve({ port: 4000, subscriptions: true });
+// → ws://localhost:4000/graphql
+```
+
+```graphql
+# Fires whenever a Pool is written (set or update)
+subscription {
+  poolUpdated { id address reserve0 reserve1 }
+}
+```
+
+One subscription per entity (`poolUpdated`, `tokenUpdated`, etc.).
+Fires on `store.set()` and `store.update()`. Deletes are not propagated.
+The WebSocket server shares the same port as the HTTP server.
+
+```ts
+// Graceful shutdown
+await handle.stop();
+```
+
 ## Built-in Event Decoders
 
 OpKit ships decoders for OPNET's big-endian binary event format:
@@ -355,10 +463,13 @@ getNativeToken('0x000...02');        // { symbol: 'MOTO', decimals: 8, ... }
 src/
   adapter.ts         # MinimalDbAdapter interface + SqliteAdapter (node:sqlite built-in)
   source.ts          # EventSource interface + DbEventSource (reads OpStream DB)
+  rpcSource.ts       # RpcEventSource — indexes directly from OPNET RPC (no OpStream)
+  eventSourceFactory.ts # createEventSource() — capability-probing DB→RPC factory
   schema.ts          # defineSchema() — entity definition DSL
   store.ts           # createStore() — async DB-backed entity store (opkit_* tables)
-  handler.ts         # HandlerRegistry — async event handler dispatch
-  indexer.ts         # createIndexer() — main orchestrator
+  handler.ts         # HandlerRegistry — async event handler + block handler dispatch
+  indexer.ts         # createIndexer() — main orchestrator (+ serve())
+  graphql.ts         # GraphQL schema generation + HTTP server (indexer.serve())
   types.ts           # DecodedEvent type (with tx-level context fields)
   standards.ts       # isOP20Contract(), isOP721Contract(), classifyContract()
   tokens.ts          # OPNET_NATIVE_TOKENS, getNativeToken(), isNativeToken()
@@ -369,6 +480,9 @@ tests/
   store.test.ts
   indexer.test.ts
   source.test.ts     # DbEventSource with seeded in-memory OpStream schema
+  rpcSource.test.ts  # RpcEventSource with mock BlockProvider
+  eventSourceFactory.test.ts
+  graphql.test.ts    # GraphQL schema, resolvers, filters, ordering, pagination, serve()
   standards.test.ts
   tokens.test.ts
   decoders.test.ts
@@ -410,11 +524,12 @@ See `docker-compose.yml` for the full service definitions and `justfile` for all
 
 ```bash
 npm install
-npm test             # vitest (107 tests)
+npm test             # vitest (155 tests)
 npm run test:watch   # watch mode
 ```
 
-Zero npm runtime dependencies — uses `node:sqlite` (Node 22+ built-in).
+One runtime dependency: `graphql` (schema + query engine). SQLite uses `node:sqlite` (Node 22+
+built-in). `graphql-ws` and `ws` are optional peer deps — only needed for subscriptions.
 
 ## Roadmap
 
@@ -422,6 +537,8 @@ Zero npm runtime dependencies — uses `node:sqlite` (Node 22+ built-in).
 - [x] Block handlers — `indexer.onBlock(handler)` fires after every block's events are processed
 - [x] `RpcEventSource` — index directly from OPNET RPC, no OpStream required
 - [x] `createEventSource` — capability-probing factory (DB → RPC fallback)
+- [x] GraphQL API — `indexer.serve()` auto-generates schema + resolvers from `defineSchema()`, cursor pagination, GraphiQL playground
+- [x] GraphQL subscriptions — `serve({ subscriptions: true })` via `graphql-ws` (optional peer dep)
 - [ ] Tier 2 EventSource — OpStream WebSocket endpoint (sub-second latency, blocked on OpStream enriching its WebhookEvent payload)
 - [ ] CLI scaffolding (`opkit init`)
 

@@ -26,6 +26,7 @@ import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js
 import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerContext, type BlockContext } from './handler.js';
 import { decodeEvent } from './decoders/eventDecoders.js';
 import type { DecodedEvent } from './types.js';
+import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type ServeOptions, type ServeHandle } from './graphql.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -114,7 +115,25 @@ export interface Indexer {
 
   /** Reset stats counters (does NOT drop DB tables). */
   resetStats(): void;
+
+  /**
+   * Start a GraphQL HTTP server that exposes all indexed entities.
+   *
+   * - GET  /graphql → GraphiQL playground
+   * - POST /graphql → execute queries
+   * - WS   /graphql → subscriptions (when options.subscriptions: true)
+   *
+   * Subscriptions require peer deps: npm install graphql-ws ws
+   *
+   * Example:
+   *   const handle = await indexer.serve({ port: 4000 });
+   *   console.log(`GraphQL at ${handle.url}`);
+   *   await handle.stop(); // graceful shutdown
+   */
+  serve(options?: ServeOptions): Promise<ServeHandle>;
 }
+
+export type { ServeOptions, ServeHandle };
 
 // ---------------------------------------------------------------------------
 // Factory — async because createStore() is async (runs CREATE TABLE IF NOT EXISTS)
@@ -281,6 +300,22 @@ export async function createIndexer<S extends SchemaDefinition>(
         eventsSkipped: 0,
         blocksProcessed: 0,
         lastBlock: 0,
+      };
+    },
+
+    async serve(options) {
+      const gqlSchema = buildGraphQLSchema(config.schema, store, {
+        subscriptions: options?.subscriptions,
+      });
+      const { server, url } = startGraphQLServer(gqlSchema, options);
+      if (options?.subscriptions) {
+        await startSubscriptionServer(gqlSchema, server);
+      }
+      return {
+        url,
+        stop: () => new Promise((resolve, reject) =>
+          server.close((err) => (err ? reject(err) : resolve())),
+        ),
       };
     },
   };

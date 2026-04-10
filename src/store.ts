@@ -20,6 +20,15 @@ import type { MinimalDbAdapter } from './adapter.js';
 // Public interface (fully async)
 // ---------------------------------------------------------------------------
 
+/** Emitted after every store mutation. */
+export interface StoreChangeEvent {
+  entity: string;
+  id: string;
+  /** The entity record after the write, or null when the entity was deleted. */
+  record: Record<string, unknown> | null;
+  operation: 'set' | 'update' | 'delete';
+}
+
 export interface EntityStore {
   /** Get a single entity by id. Returns undefined if not found. */
   get(entity: string, id: string): Promise<Record<string, unknown> | undefined>;
@@ -44,6 +53,13 @@ export interface EntityStore {
     entity: string,
     predicate: (record: Record<string, unknown>) => boolean,
   ): Promise<Record<string, unknown>[]>;
+
+  /**
+   * Subscribe to all store mutations (set / update / delete).
+   * The handler fires synchronously after each write, with the resulting record
+   * (or null for deletes). Returns an unsubscribe function.
+   */
+  onChange(handler: (event: StoreChangeEvent) => void): () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +157,13 @@ export async function createStore(
     return schema.getEntity(entity); // throws if unknown
   }
 
+  // Change notification — simple pub/sub, no external dependency
+  const changeHandlers = new Set<(event: StoreChangeEvent) => void>();
+
+  function notify(event: StoreChangeEvent): void {
+    for (const handler of changeHandlers) handler(event);
+  }
+
   return {
     async get(entity, id) {
       const def = assertKnown(entity);
@@ -164,6 +187,16 @@ export async function createStore(
         `INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`,
         values,
       );
+      // Notify with the JS-typed record (not the serialised SQL form)
+      const record: Record<string, unknown> = { id };
+      for (const [f, fieldDef] of Object.entries(def)) {
+        record[f] = data[f] !== undefined ? data[f] : null;
+        // Normalise so consumers always get typed values (bigint, boolean, etc.)
+        if (record[f] !== null && record[f] !== undefined) {
+          record[f] = deserialise(serialise(record[f], fieldDef.type), fieldDef.type);
+        }
+      }
+      notify({ entity, id, record, operation: 'set' });
     },
 
     async update(entity, id, partial) {
@@ -189,12 +222,19 @@ export async function createStore(
         `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ?`,
         values,
       );
+      // Re-read the full row so the notification has the complete merged record
+      const updated = await adapter.get<Record<string, unknown>>(
+        `SELECT * FROM ${table} WHERE "id" = ?`,
+        [id],
+      );
+      notify({ entity, id, record: updated ? deserialiseRow(updated, def) : null, operation: 'update' });
     },
 
     async delete(entity, id) {
       assertKnown(entity);
       const table = tableName(entity);
       await adapter.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]);
+      notify({ entity, id, record: null, operation: 'delete' });
     },
 
     async list(entity) {
@@ -218,6 +258,11 @@ export async function createStore(
       return rows
         .map((r) => deserialiseRow(r, def))
         .filter(predicate);
+    },
+
+    onChange(handler) {
+      changeHandlers.add(handler);
+      return () => { changeHandlers.delete(handler); };
     },
   };
 }
