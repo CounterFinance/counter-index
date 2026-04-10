@@ -26,10 +26,12 @@ export interface HandlerContext {
   store: EntityStore;
   /** Block number of the current event. */
   block: number;
+  /** Unix timestamp of the block. Undefined when source doesn't provide it. */
+  blockTimestamp: number | undefined;
 }
 
-/** An event handler function. */
-export type EventHandler = (event: DecodedEvent, context: HandlerContext) => void;
+/** An event handler function. May be async. */
+export type EventHandler = (event: DecodedEvent, context: HandlerContext) => Promise<void> | void;
 
 // ---------------------------------------------------------------------------
 // Handler registry
@@ -56,16 +58,16 @@ export class HandlerRegistry {
     }
   }
 
-  /** Dispatch an event to all matching handlers. */
-  dispatch(event: DecodedEvent, context: HandlerContext): void {
+  /** Dispatch an event to all matching handlers. Awaits async handlers in sequence. */
+  async dispatch(event: DecodedEvent, context: HandlerContext): Promise<void> {
     const specific = this.handlers.get(event.eventName);
     if (specific) {
       for (const handler of specific) {
-        handler(event, context);
+        await handler(event, context);
       }
     }
     for (const handler of this.wildcardHandlers) {
-      handler(event, context);
+      await handler(event, context);
     }
   }
 

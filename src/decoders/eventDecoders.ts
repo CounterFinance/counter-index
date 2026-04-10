@@ -133,16 +133,44 @@ function decodeSwapExecuted(rawData: Buffer | Uint8Array): Record<string, unknow
   };
 }
 
+/**
+ * Approval (OP-20 spend allowance)
+ * Layout: owner (32 addr) + spender (32 addr) + value (32 U256) = 96 bytes
+ */
+function decodeApproval(rawData: Buffer | Uint8Array): Record<string, unknown> | null {
+  if (rawData.length < 96) return null;
+  return {
+    owner:   toHex(rawData, 0, 32),
+    spender: toHex(rawData, 32, 32),
+    value:   readU256(rawData, 64),
+  };
+}
+
+/**
+ * ApprovalForAll (OP-721 operator approval)
+ * Layout: owner (32 addr) + operator (32 addr) + approved (1 bool) = 65 bytes
+ */
+function decodeApprovalForAll(rawData: Buffer | Uint8Array): Record<string, unknown> | null {
+  if (rawData.length < 65) return null;
+  return {
+    owner:    toHex(rawData, 0, 32),
+    operator: toHex(rawData, 32, 32),
+    approved: rawData[64] !== 0,
+  };
+}
+
 // --- Registry ---------------------------------------------------------------
 
 export const DECODER_REGISTRY: Map<string, EventDecoder> = new Map([
-  ['Transferred', decodeTransferred],
-  ['Synced', decodeSynced],
-  ['Swapped', decodeSwapped],
-  ['LiquidityListed', decodeLiquidityListed],
+  ['Transferred',    decodeTransferred],
+  ['Synced',         decodeSynced],
+  ['Swapped',        decodeSwapped],
+  ['LiquidityListed',decodeLiquidityListed],
   ['LiquidityAdded', decodeLiquidityAdded],
-  ['PoolCreated', decodePoolCreated],
-  ['SwapExecuted', decodeSwapExecuted],
+  ['PoolCreated',    decodePoolCreated],
+  ['SwapExecuted',   decodeSwapExecuted],
+  ['Approval',       decodeApproval],
+  ['ApprovalForAll', decodeApprovalForAll],
 ]);
 
 /**

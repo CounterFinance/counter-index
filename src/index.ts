@@ -1,16 +1,34 @@
 /**
  * @opnet-devs/opkit — Indexer framework for OPNET.
  *
- * Define a schema. Register event handlers. Feed chain data.
- * Query your indexed entities.
+ * Define a schema. Register event handlers. Feed chain data via sync() or subscribe().
+ * Query your indexed entities from the DB OpKit manages.
  */
 
 // --- Core framework --------------------------------------------------------
 
 export { defineSchema, type Schema, type SchemaDefinition, type EntityDef, type FieldDef, type FieldType } from './schema.js';
-export { createStore, type EntityStore } from './store.js';
+export { type EntityStore } from './store.js';
 export { HandlerRegistry, type HandlerContext, type EventHandler } from './handler.js';
 export { createIndexer, type Indexer, type IndexerConfig, type IndexerStats } from './indexer.js';
+
+// --- DB adapter ------------------------------------------------------------
+
+export {
+  type MinimalDbAdapter,
+  SqliteAdapter,
+  openSqlite,
+  createTestAdapter,
+} from './adapter.js';
+
+// --- Event source ----------------------------------------------------------
+
+export {
+  DbEventSource,
+  type EventSource,
+  type EventSourceFilters,
+  type UnsubscribeFn,
+} from './source.js';
 
 // --- Types -----------------------------------------------------------------
 
@@ -22,3 +40,18 @@ export {
   decodeEvent, registerDecoder, DECODER_REGISTRY,
   type EventDecoder,
 } from './decoders/eventDecoders.js';
+
+// --- Contract standard detection -------------------------------------------
+
+export {
+  OP20_EVENT_NAMES, OP721_EVENT_NAMES,
+  isOP20Contract, isOP721Contract, classifyContract,
+  type OP20EventName, type OP721EventName,
+} from './standards.js';
+
+// --- Native token constants ------------------------------------------------
+
+export {
+  OPNET_NATIVE_TOKENS, getNativeToken, isNativeToken,
+  type TokenMetadata,
+} from './tokens.js';

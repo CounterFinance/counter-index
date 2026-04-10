@@ -1,92 +1,167 @@
-import { describe, it, expect } from 'vitest';
+/**
+ * EntityStore — DB-backed store tests.
+ */
+
+import { describe, it, expect, beforeEach } from 'vitest';
 import { defineSchema } from '../src/schema.js';
 import { createStore } from '../src/store.js';
+import { createTestAdapter, type SqliteAdapter } from '../src/adapter.js';
+import type { MinimalDbAdapter } from '../src/adapter.js';
 
 const schema = defineSchema({
-  Account: { address: { type: 'string' }, balance: { type: 'bigint' } },
-  Token: { symbol: { type: 'string' } },
+  Account: {
+    address:  { type: 'string' },
+    balance:  { type: 'bigint' },
+    txCount:  { type: 'int' },
+    active:   { type: 'boolean' },
+    lastSeen: { type: 'int', optional: true },
+  },
+  Transfer: {
+    txHash: { type: 'string' },
+    from:   { type: 'string' },
+    to:     { type: 'string' },
+    value:  { type: 'bigint' },
+    block:  { type: 'int' },
+  },
+});
+
+let adapter: MinimalDbAdapter;
+
+beforeEach(() => {
+  adapter = createTestAdapter();
 });
 
 describe('createStore', () => {
-  it('set + get round-trips', () => {
-    const store = createStore(schema);
-    store.set('Account', 'a1', { address: '0xabc', balance: 100n });
-    expect(store.get('Account', 'a1')).toEqual({ id: 'a1', address: '0xabc', balance: 100n });
+  it('creates tables without error', async () => {
+    await expect(createStore(schema, adapter)).resolves.toBeDefined();
   });
 
-  it('get returns undefined for missing id', () => {
-    const store = createStore(schema);
-    expect(store.get('Account', 'missing')).toBeUndefined();
+  it('creates opkit_* prefixed tables', async () => {
+    await createStore(schema, adapter);
+    const raw = (adapter as SqliteAdapter).rawDb;
+    const tables = raw.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'opkit_%'`,
+    ).all() as Array<{ name: string }>;
+    const names = tables.map((t) => t.name);
+    expect(names).toContain('opkit_account');
+    expect(names).toContain('opkit_transfer');
   });
 
-  it('set overwrites existing', () => {
-    const store = createStore(schema);
-    store.set('Account', 'a1', { address: '0xold' });
-    store.set('Account', 'a1', { address: '0xnew' });
-    expect(store.get('Account', 'a1')!.address).toBe('0xnew');
+  it('is idempotent — creating twice does not throw', async () => {
+    await createStore(schema, adapter);
+    await expect(createStore(schema, adapter)).resolves.toBeDefined();
+  });
+});
+
+describe('set / get', () => {
+  it('stores and retrieves a record', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'alice', {
+      address: '0xalice', balance: 1000n, txCount: 3, active: true,
+    });
+    const record = await store.get('Account', 'alice');
+    expect(record).toBeDefined();
+    expect(record!['address']).toBe('0xalice');
+    expect(record!['balance']).toBe(1000n);
+    expect(record!['txCount']).toBe(3);
+    expect(record!['active']).toBe(true);
   });
 
-  it('update merges fields', () => {
-    const store = createStore(schema);
-    store.set('Account', 'a1', { address: '0xabc', balance: 100n });
-    store.update('Account', 'a1', { balance: 200n });
-    expect(store.get('Account', 'a1')).toEqual({ id: 'a1', address: '0xabc', balance: 200n });
+  it('overwrites an existing record on set', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'alice', { address: '0xa', balance: 100n, txCount: 1, active: true });
+    await store.set('Account', 'alice', { address: '0xa', balance: 999n, txCount: 5, active: false });
+    const record = await store.get('Account', 'alice');
+    expect(record!['balance']).toBe(999n);
+    expect(record!['active']).toBe(false);
   });
 
-  it('update throws for missing id', () => {
-    const store = createStore(schema);
-    expect(() => store.update('Account', 'missing', { balance: 1n })).toThrow('not found');
+  it('returns undefined for missing id', async () => {
+    const store = await createStore(schema, adapter);
+    expect(await store.get('Account', 'nobody')).toBeUndefined();
   });
 
-  it('delete removes entity', () => {
-    const store = createStore(schema);
-    store.set('Account', 'a1', { address: '0xabc' });
-    store.delete('Account', 'a1');
-    expect(store.get('Account', 'a1')).toBeUndefined();
+  it('throws on unknown entity', async () => {
+    const store = await createStore(schema, adapter);
+    await expect(store.get('Unknown', 'id')).rejects.toThrow();
   });
 
-  it('delete is no-op for missing id', () => {
-    const store = createStore(schema);
-    expect(() => store.delete('Account', 'missing')).not.toThrow();
+  it('serialises bigint as string and deserialises back', async () => {
+    const store = await createStore(schema, adapter);
+    const big = 123456789012345678901234567890n;
+    await store.set('Account', 'whale', { address: '0xw', balance: big, txCount: 0, active: true });
+    const record = await store.get('Account', 'whale');
+    expect(record!['balance']).toBe(big);
+  });
+});
+
+describe('update', () => {
+  it('merges partial fields', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'bob', { address: '0xbob', balance: 500n, txCount: 2, active: true });
+    await store.update('Account', 'bob', { txCount: 10, balance: 200n });
+    const record = await store.get('Account', 'bob');
+    expect(record!['txCount']).toBe(10);
+    expect(record!['balance']).toBe(200n);
+    expect(record!['address']).toBe('0xbob');
   });
 
-  it('list returns all entities', () => {
-    const store = createStore(schema);
-    store.set('Account', 'a1', { address: '0xa' });
-    store.set('Account', 'a2', { address: '0xb' });
-    expect(store.list('Account')).toHaveLength(2);
+  it('throws if entity not found', async () => {
+    const store = await createStore(schema, adapter);
+    await expect(store.update('Account', 'ghost', { txCount: 1 })).rejects.toThrow();
+  });
+});
+
+describe('delete', () => {
+  it('removes an entity', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'alice', { address: '0xa', balance: 0n, txCount: 0, active: false });
+    await store.delete('Account', 'alice');
+    expect(await store.get('Account', 'alice')).toBeUndefined();
   });
 
-  it('count returns entity count', () => {
-    const store = createStore(schema);
-    expect(store.count('Account')).toBe(0);
-    store.set('Account', 'a1', { address: '0xa' });
-    expect(store.count('Account')).toBe(1);
+  it('no-op on missing entity', async () => {
+    const store = await createStore(schema, adapter);
+    await expect(store.delete('Account', 'nobody')).resolves.toBeUndefined();
+  });
+});
+
+describe('list / count', () => {
+  it('lists all entities', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'a1', { address: '0x1', balance: 0n, txCount: 0, active: true });
+    await store.set('Account', 'a2', { address: '0x2', balance: 0n, txCount: 0, active: true });
+    expect(await store.list('Account')).toHaveLength(2);
   });
 
-  it('find filters by predicate', () => {
-    const store = createStore(schema);
-    store.set('Account', 'a1', { address: '0xa', balance: 100n });
-    store.set('Account', 'a2', { address: '0xb', balance: 200n });
-    store.set('Account', 'a3', { address: '0xc', balance: 50n });
-    const big = store.find('Account', (r) => (r.balance as bigint) >= 100n);
-    expect(big).toHaveLength(2);
+  it('counts correctly', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'a1', { address: '0x1', balance: 0n, txCount: 0, active: true });
+    await store.set('Account', 'a2', { address: '0x2', balance: 0n, txCount: 0, active: true });
+    expect(await store.count('Account')).toBe(2);
+    await store.delete('Account', 'a1');
+    expect(await store.count('Account')).toBe(1);
   });
+});
 
-  it('throws for unknown entity name', () => {
-    const store = createStore(schema);
-    expect(() => store.get('Unknown', 'x')).toThrow('Unknown entity');
-    expect(() => store.set('Unknown', 'x', {})).toThrow('Unknown entity');
-    expect(() => store.list('Unknown')).toThrow('Unknown entity');
+describe('find', () => {
+  it('filters by predicate', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'rich',  { address: '0xr', balance: 1_000_000n, txCount: 10, active: true });
+    await store.set('Account', 'poor',  { address: '0xp', balance: 100n, txCount: 1, active: true });
+    await store.set('Account', 'broke', { address: '0xb', balance: 0n, txCount: 0, active: false });
+    const whales = await store.find('Account', (r) => (r['balance'] as bigint) > 500n);
+    expect(whales).toHaveLength(1);
+    expect(whales[0]!['address']).toBe('0xr');
   });
+});
 
-  it('entities are isolated between types', () => {
-    const store = createStore(schema);
-    store.set('Account', 'id1', { address: '0xa' });
-    store.set('Token', 'id1', { symbol: 'BTC' });
-    expect(store.count('Account')).toBe(1);
-    expect(store.count('Token')).toBe(1);
-    expect(store.get('Account', 'id1')!.address).toBe('0xa');
-    expect(store.get('Token', 'id1')!.symbol).toBe('BTC');
+describe('entity isolation', () => {
+  it('different entities do not interfere', async () => {
+    const store = await createStore(schema, adapter);
+    await store.set('Account', 'id1', { address: '0xa', balance: 0n, txCount: 0, active: true });
+    await store.set('Transfer', 'id1', { txHash: '0xtx', from: '0xa', to: '0xb', value: 100n, block: 1 });
+    expect(await store.count('Account')).toBe(1);
+    expect(await store.count('Transfer')).toBe(1);
   });
 });

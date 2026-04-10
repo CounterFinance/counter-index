@@ -1,99 +1,223 @@
 /**
- * Entity store — in-memory indexed data store.
+ * Entity store — DB-backed indexed data store.
  *
- * Each entity type gets its own key-value map (id → record).
- * The store validates entity names against the schema but keeps
- * records as plain objects for simplicity.
+ * Each entity defined in the schema gets its own `opkit_<entity>` table
+ * (lowercase). Tables are created automatically when the store is initialised.
+ * All operations are async — the underlying adapter may be synchronous SQLite
+ * or async Postgres; callers don't need to know which.
  *
- * Future: SQLite-backed store for persistence across restarts.
+ * BigInt fields are serialised as decimal strings (TEXT) since SQL has no
+ * native bigint type. They are deserialised back to BigInt on read.
+ *
+ * Table prefix `opkit_` prevents collisions with OpStream's raw tables when
+ * both use the same database.
  */
 
-import type { Schema, SchemaDefinition } from './schema.js';
+import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
+import type { MinimalDbAdapter } from './adapter.js';
 
 // ---------------------------------------------------------------------------
-// Public interface
+// Public interface (fully async)
 // ---------------------------------------------------------------------------
 
 export interface EntityStore {
   /** Get a single entity by id. Returns undefined if not found. */
-  get(entity: string, id: string): Record<string, unknown> | undefined;
+  get(entity: string, id: string): Promise<Record<string, unknown> | undefined>;
 
   /** Insert or overwrite an entity by id. */
-  set(entity: string, id: string, data: Record<string, unknown>): void;
+  set(entity: string, id: string, data: Record<string, unknown>): Promise<void>;
 
   /** Merge partial fields into an existing entity. Throws if not found. */
-  update(entity: string, id: string, partial: Record<string, unknown>): void;
+  update(entity: string, id: string, partial: Record<string, unknown>): Promise<void>;
 
   /** Delete an entity by id. No-op if not found. */
-  delete(entity: string, id: string): void;
+  delete(entity: string, id: string): Promise<void>;
 
   /** List all entities of a given type. */
-  list(entity: string): Record<string, unknown>[];
+  list(entity: string): Promise<Record<string, unknown>[]>;
 
   /** Count entities of a given type. */
-  count(entity: string): number;
+  count(entity: string): Promise<number>;
 
-  /** Find entities matching a predicate. */
+  /** Find entities matching a predicate (JS-side filtering after SELECT *). */
   find(
     entity: string,
     predicate: (record: Record<string, unknown>) => boolean,
-  ): Record<string, unknown>[];
+  ): Promise<Record<string, unknown>[]>;
 }
 
 // ---------------------------------------------------------------------------
-// In-memory implementation
+// SQL type mapping
 // ---------------------------------------------------------------------------
 
-export function createStore(schema: Schema<SchemaDefinition>): EntityStore {
-  // One Map per entity type
-  const tables = new Map<string, Map<string, Record<string, unknown>>>();
+const TABLE_PREFIX = 'opkit_';
 
+function fieldTypeSql(type: FieldType, dialect: 'sqlite' | 'postgres'): string {
+  switch (type) {
+    case 'string':  return 'TEXT';
+    case 'int':     return dialect === 'postgres' ? 'BIGINT' : 'INTEGER';
+    case 'float':   return dialect === 'postgres' ? 'DOUBLE PRECISION' : 'REAL';
+    case 'bigint':  return 'TEXT';     // stored as decimal string
+    case 'boolean': return dialect === 'postgres' ? 'BOOLEAN' : 'INTEGER';
+    case 'bytes':   return dialect === 'postgres' ? 'BYTEA' : 'BLOB';
+  }
+}
+
+function tableName(entity: string): string {
+  return `${TABLE_PREFIX}${entity.toLowerCase()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Serialisation helpers
+// ---------------------------------------------------------------------------
+
+function serialise(value: unknown, type: FieldType): unknown {
+  if (value === null || value === undefined) return null;
+  switch (type) {
+    case 'bigint':  return typeof value === 'bigint' ? value.toString() : String(value);
+    case 'boolean': return value ? 1 : 0;
+    default:        return value;
+  }
+}
+
+function deserialise(value: unknown, type: FieldType): unknown {
+  if (value === null || value === undefined) return undefined;
+  switch (type) {
+    case 'bigint':  return BigInt(value as string);
+    case 'boolean': return value !== 0 && value !== false;
+    default:        return value;
+  }
+}
+
+function deserialiseRow(
+  row: Record<string, unknown>,
+  def: EntityDef,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: row['id'] };
+  for (const [field, fieldDef] of Object.entries(def)) {
+    if (field in row) {
+      out[field] = deserialise(row[field], fieldDef.type);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// DDL generation
+// ---------------------------------------------------------------------------
+
+/** Quote a column name to handle SQL reserved words (from, to, select, etc.). */
+function col(name: string): string {
+  return `"${name}"`;
+}
+
+function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres'): string {
+  const table = tableName(entity);
+  const cols = ['"id" TEXT NOT NULL PRIMARY KEY'];
+  for (const [field, fieldDef] of Object.entries(def)) {
+    const sqlType = fieldTypeSql(fieldDef.type, dialect);
+    const nullable = fieldDef.optional ? '' : ` NOT NULL DEFAULT ''`;
+    cols.push(`${col(field)} ${sqlType}${nullable}`);
+  }
+  return `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
+}
+
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
+export async function createStore(
+  schema: Schema<SchemaDefinition>,
+  adapter: MinimalDbAdapter,
+): Promise<EntityStore> {
+  // Create all entity tables
   for (const name of schema.entityNames()) {
-    tables.set(name, new Map());
+    const def = schema.getEntity(name);
+    const ddl = buildCreateTable(name, def, adapter.dialect);
+    await adapter.exec(ddl);
   }
 
-  function getTable(entity: string): Map<string, Record<string, unknown>> {
-    const table = tables.get(entity);
-    if (!table) throw new Error(`Unknown entity: "${entity}"`);
-    return table;
+  function assertKnown(entity: string): EntityDef {
+    return schema.getEntity(entity); // throws if unknown
   }
 
   return {
-    get(entity, id) {
-      return getTable(entity).get(id);
+    async get(entity, id) {
+      const def = assertKnown(entity);
+      const table = tableName(entity);
+      const row = await adapter.get<Record<string, unknown>>(
+        `SELECT * FROM ${table} WHERE "id" = ?`,
+        [id],
+      );
+      if (!row) return undefined;
+      return deserialiseRow(row, def);
     },
 
-    set(entity, id, data) {
-      getTable(entity).set(id, { ...data, id });
+    async set(entity, id, data) {
+      const def = assertKnown(entity);
+      const table = tableName(entity);
+      const fields = Object.keys(def);
+      const cols = ['"id"', ...fields.map(col)].join(', ');
+      const placeholders = ['?', ...fields.map(() => '?')].join(', ');
+      const values = [id, ...fields.map((f) => serialise(data[f], def[f]!.type))];
+      await adapter.run(
+        `INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`,
+        values,
+      );
     },
 
-    update(entity, id, partial) {
-      const table = getTable(entity);
-      const existing = table.get(id);
-      if (!existing) {
-        throw new Error(`${entity} with id "${id}" not found`);
+    async update(entity, id, partial) {
+      const def = assertKnown(entity);
+      const table = tableName(entity);
+      const existing = await adapter.get<Record<string, unknown>>(
+        `SELECT * FROM ${table} WHERE "id" = ?`,
+        [id],
+      );
+      if (!existing) throw new Error(`${entity} with id "${id}" not found`);
+
+      const setClauses: string[] = [];
+      const values: unknown[] = [];
+      for (const [field, value] of Object.entries(partial)) {
+        if (field in def) {
+          setClauses.push(`${col(field)} = ?`);
+          values.push(serialise(value, def[field]!.type));
+        }
       }
-      table.set(id, { ...existing, ...partial });
+      if (setClauses.length === 0) return;
+      values.push(id);
+      await adapter.run(
+        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ?`,
+        values,
+      );
     },
 
-    delete(entity, id) {
-      getTable(entity).delete(id);
+    async delete(entity, id) {
+      assertKnown(entity);
+      const table = tableName(entity);
+      await adapter.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]);
     },
 
-    list(entity) {
-      return Array.from(getTable(entity).values());
+    async list(entity) {
+      const def = assertKnown(entity);
+      const table = tableName(entity);
+      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}`);
+      return rows.map((r) => deserialiseRow(r, def));
     },
 
-    count(entity) {
-      return getTable(entity).size;
+    async count(entity) {
+      assertKnown(entity);
+      const table = tableName(entity);
+      const row = await adapter.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
+      return row?.n ?? 0;
     },
 
-    find(entity, predicate) {
-      const results: Record<string, unknown>[] = [];
-      for (const record of getTable(entity).values()) {
-        if (predicate(record)) results.push(record);
-      }
-      return results;
+    async find(entity, predicate) {
+      const def = assertKnown(entity);
+      const table = tableName(entity);
+      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}`);
+      return rows
+        .map((r) => deserialiseRow(r, def))
+        .filter(predicate);
     },
   };
 }

@@ -1,25 +1,28 @@
 /**
  * Indexer — the main orchestrator.
  *
- * Wire up a schema, register event handlers, then feed events in.
- * The indexer decodes raw events, dispatches to handlers, and maintains
- * the entity store.
+ * Wire up a schema, a sink DB (where OpKit writes derived tables), and optionally
+ * a source (where raw chain events are read from). Register event handlers, then
+ * run backfill via sync() or go live via subscribe().
  *
  * Usage:
- *   const indexer = createIndexer({ schema });
- *   indexer.on('Transferred', (event, ctx) => { ... });
+ *   const indexer = await createIndexer({ schema, sink: adapter, source: dbSource });
+ *   indexer.on('Transferred', async (event, ctx) => {
+ *     await ctx.store.set('Transfer', event.txHash, { ... });
+ *   });
  *
- *   // Feed events (from OpStream, RPC, or any source)
- *   indexer.processEvent(event);
- *   indexer.processEvents(events);
+ *   await indexer.sync(941400, latestBlock);   // backfill
+ *   indexer.subscribe();                        // go live
  *
- *   // Query indexed data
- *   const accounts = indexer.store.list('Account');
+ *   // Or feed events directly (e.g. from a WebSocket)
+ *   await indexer.processEvent(event);
  */
 
 import type { Schema, SchemaDefinition } from './schema.js';
 import type { EntityStore } from './store.js';
 import { createStore } from './store.js';
+import type { MinimalDbAdapter } from './adapter.js';
+import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
 import { HandlerRegistry, type EventHandler, type HandlerContext } from './handler.js';
 import { decodeEvent } from './decoders/eventDecoders.js';
 import type { DecodedEvent } from './types.js';
@@ -30,6 +33,10 @@ import type { DecodedEvent } from './types.js';
 
 export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   schema: Schema<S>;
+  /** Sink DB — OpKit owns its own opkit_* tables here. */
+  sink: MinimalDbAdapter;
+  /** Source — where raw chain events are read from. Required for sync() and subscribe(). */
+  source?: EventSource;
 }
 
 export interface IndexerStats {
@@ -44,39 +51,65 @@ export interface Indexer {
   on(eventName: string, handler: EventHandler): void;
 
   /** Process a single decoded event through all matching handlers. */
-  processEvent(event: DecodedEvent): void;
+  processEvent(event: DecodedEvent): Promise<void>;
 
   /** Process a batch of events in order. */
-  processEvents(events: DecodedEvent[]): void;
+  processEvents(events: DecodedEvent[]): Promise<void>;
 
   /**
    * Process a raw event: decode it first, then dispatch.
-   * Useful when you have raw event bytes and a name but haven't decoded yet.
+   * Useful when receiving raw bytes directly (e.g. WebSocket push).
    */
   processRawEvent(
     eventName: string,
     rawData: Buffer | Uint8Array,
-    meta: { blockNumber: number; txHash: string; contractAddress: string },
-  ): void;
+    meta: {
+      blockNumber: number;
+      txHash: string;
+      contractAddress: string;
+      blockTimestamp?: number;
+      logIndex?: number;
+      fromAddress?: string;
+    },
+  ): Promise<void>;
 
-  /** The entity store. Query indexed data here. */
+  /**
+   * Backfill: query [fromBlock, toBlock] from the source and run all events
+   * through handlers. Requires source to be set.
+   */
+  sync(
+    fromBlock: number,
+    toBlock: number,
+    filters?: EventSourceFilters,
+  ): Promise<IndexerStats>;
+
+  /**
+   * Live: subscribe to new events from the source starting at fromBlock.
+   * Returns an unsubscribe function. Requires source to be set.
+   */
+  subscribe(
+    fromBlock: number,
+    options?: { pollIntervalMs?: number; filters?: EventSourceFilters },
+  ): UnsubscribeFn;
+
+  /** The entity store — query OpKit's derived tables here. */
   readonly store: EntityStore;
 
   /** Processing statistics. */
   readonly stats: IndexerStats;
 
-  /** Reset the store and stats. */
-  reset(): void;
+  /** Reset stats counters (does NOT drop DB tables). */
+  resetStats(): void;
 }
 
 // ---------------------------------------------------------------------------
-// Implementation
+// Factory — async because createStore() is async (runs CREATE TABLE IF NOT EXISTS)
 // ---------------------------------------------------------------------------
 
-export function createIndexer<S extends SchemaDefinition>(
+export async function createIndexer<S extends SchemaDefinition>(
   config: IndexerConfig<S>,
-): Indexer {
-  let store = createStore(config.schema);
+): Promise<Indexer> {
+  const store = await createStore(config.schema, config.sink);
   const registry = new HandlerRegistry();
   let stats: IndexerStats = {
     eventsProcessed: 0,
@@ -85,23 +118,34 @@ export function createIndexer<S extends SchemaDefinition>(
     lastBlock: 0,
   };
 
-  function makeContext(block: number): HandlerContext {
-    return { store, block };
+  function makeContext(event: DecodedEvent): HandlerContext {
+    return {
+      store,
+      block: event.blockNumber,
+      blockTimestamp: event.blockTimestamp,
+    };
   }
 
-  function dispatch(event: DecodedEvent): void {
+  async function dispatch(event: DecodedEvent): Promise<void> {
     stats.eventsProcessed++;
     if (event.blockNumber > stats.lastBlock) {
       stats.lastBlock = event.blockNumber;
     }
-
     if (event.decoded) {
       stats.eventsDecoded++;
     } else {
       stats.eventsSkipped++;
     }
+    await registry.dispatch(event, makeContext(event));
+  }
 
-    registry.dispatch(event, makeContext(event.blockNumber));
+  function requireSource(): EventSource {
+    if (!config.source) {
+      throw new Error(
+        'No EventSource configured. Pass source: to createIndexer() or use processEvent() directly.',
+      );
+    }
+    return config.source;
   }
 
   return {
@@ -109,28 +153,49 @@ export function createIndexer<S extends SchemaDefinition>(
       registry.on(eventName, handler);
     },
 
-    processEvent(event) {
-      dispatch(event);
+    async processEvent(event) {
+      await dispatch(event);
     },
 
-    processEvents(events) {
+    async processEvents(events) {
       for (const event of events) {
-        dispatch(event);
+        await dispatch(event);
       }
     },
 
-    processRawEvent(eventName, rawData, meta) {
-      const decoded = decodeEvent(eventName, rawData);
-      const event: DecodedEvent = {
-        blockNumber: meta.blockNumber,
-        txHash: meta.txHash,
+    async processRawEvent(eventName, rawData, meta) {
+      const raw = rawData instanceof Uint8Array ? rawData : new Uint8Array(rawData);
+      const decoded = decodeEvent(eventName, raw);
+      await dispatch({
+        blockNumber:     meta.blockNumber,
+        txHash:          meta.txHash,
         contractAddress: meta.contractAddress,
         eventName,
-        eventRaw: rawData instanceof Uint8Array ? rawData : new Uint8Array(rawData),
+        eventRaw:        raw,
         decoded,
-        dataLength: rawData.length,
-      };
-      dispatch(event);
+        dataLength:      raw.length,
+        blockTimestamp:  meta.blockTimestamp,
+        logIndex:        meta.logIndex,
+        fromAddress:     meta.fromAddress,
+      });
+    },
+
+    async sync(fromBlock, toBlock, filters) {
+      const source = requireSource();
+      const events = await source.query(fromBlock, toBlock, filters);
+      for (const event of events) {
+        await dispatch(event);
+      }
+      return { ...stats };
+    },
+
+    subscribe(fromBlock, options) {
+      const source = requireSource();
+      return source.subscribe(
+        fromBlock,
+        async (event) => { await dispatch(event); },
+        { pollIntervalMs: options?.pollIntervalMs },
+      );
     },
 
     get store() {
@@ -141,8 +206,7 @@ export function createIndexer<S extends SchemaDefinition>(
       return { ...stats };
     },
 
-    reset() {
-      store = createStore(config.schema);
+    resetStats() {
       stats = {
         eventsProcessed: 0,
         eventsDecoded: 0,
