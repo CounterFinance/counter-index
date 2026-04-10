@@ -1,0 +1,104 @@
+# OpKit — full-stack Docker Compose
+#
+# Shows OpStream (data source) + an OpKit-based indexer running side by side.
+# The "opkit-indexer" service is a PLACEHOLDER — replace it with your own
+# indexer (e.g., your-app) once it has a Dockerfile and entry point.
+#
+# ── SQLite (default — two separate DB files on a shared volume) ───────────────
+#   Run from the Opnet-devs/ parent directory:
+#     docker compose -f OpKit/docker-compose.yml up -d
+#
+# ── Postgres (bundled) ────────────────────────────────────────────────────────
+#     docker compose -f OpKit/docker-compose.yml --profile postgres up -d
+#
+# ── Postgres (external — set OPSTREAM_DB_URL / OPKIT_DB_URL in .env) ─────────
+#     docker compose -f OpKit/docker-compose.yml up -d
+#
+# Directory layout assumed (run from Opnet-devs/ parent):
+#   Opnet-devs/
+#     OpStream/     — chain scanner
+#     OpKit/        — this file lives here
+#     MyIndexer/    — your indexer app (replace in the opkit-indexer service)
+
+services:
+
+  # ── OpStream — scans blocks, writes to opstream.db ───────────────────────────
+  opstream:
+    build:
+      context: ..                         # Opnet-devs/ parent (OpKit dep needs it)
+      dockerfile: OpStream/Dockerfile
+    image: opstream:latest
+    container_name: opstream
+    restart: unless-stopped
+    env_file: ../OpStream/.env
+
+    volumes:
+      # SQLite data shared with opkit-indexer below:
+      - chain_data:/app/data
+    # Postgres: remove the volume above and set OPSTREAM_DB_URL in env_file
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -f /app/data/opstream.db || sleep 5"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  # ── OpKit-based indexer — reads opstream.db, writes opkit.db ─────────────────
+  #
+  # REPLACE THIS SERVICE with your actual indexer (e.g., your-app).
+  # Steps:
+  #   1. Create your indexer directory with a Dockerfile (see OpKit/Dockerfile).
+  #   2. Update `build.dockerfile` to point at your indexer's Dockerfile.
+  #   3. Set your env vars (OPSTREAM_DB_PATH, OPKIT_DB_PATH, etc.).
+  #
+  opkit-indexer:
+    build:
+      context: ..                         # Opnet-devs/ parent
+      dockerfile: OpKit/Dockerfile        # Replace with MyIndexer/Dockerfile
+    image: opkit-indexer:latest
+    container_name: opkit-indexer
+    restart: unless-stopped
+    # env_file: ../MyIndexer/.env         # Uncomment and point at your .env
+
+    environment:
+      # SQLite paths inside the container:
+      OPSTREAM_DB_PATH: /app/data/opstream.db   # source — written by OpStream above
+      OPKIT_DB_PATH:    /app/data/opkit.db      # sink   — written by this indexer
+      # Postgres: set these instead (opkit_* prefix avoids table collisions):
+      # OPSTREAM_DB_URL: postgres://opstream:secret@postgres:5432/opstream
+      # OPKIT_DB_URL:    postgres://opstream:secret@postgres:5432/opstream
+
+    volumes:
+      - chain_data:/app/data              # Shared with opstream — reads opstream.db
+
+    depends_on:
+      opstream:
+        condition: service_healthy
+
+  # ── Bundled Postgres (optional — activate with --profile postgres) ──────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: opkit-postgres
+    profiles: [postgres]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       opstream
+      POSTGRES_USER:     opstream
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opstream_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opstream -d opstream"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  chain_data:       # Shared SQLite volume (opstream.db + opkit.db)
+  postgres_data:    # Postgres data (only used with --profile postgres)
