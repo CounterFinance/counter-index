@@ -33,6 +33,33 @@ export interface HandlerContext {
 /** An event handler function. May be async. */
 export type EventHandler = (event: DecodedEvent, context: HandlerContext) => Promise<void> | void;
 
+/**
+ * Context passed to every block handler.
+ * Fires once per block, after all event handlers for that block have run.
+ */
+export interface BlockContext {
+  /** The block number that just finished processing. */
+  blockNumber: number;
+  /** Unix timestamp of the block. Undefined when source doesn't provide it. */
+  blockTimestamp: number | undefined;
+  /** The entity store — read and write indexed data here. */
+  store: EntityStore;
+}
+
+/**
+ * A block handler function. Fires once per block after all events in that
+ * block have been dispatched to event handlers.
+ *
+ * Useful for:
+ *   - OHLCV candle closes: "commit the candle for block N"
+ *   - Reserve snapshots: "snapshot pool state at end of block N"
+ *   - Block-level aggregates: "update rolling stats every block"
+ *
+ * Note: only fires for blocks that contain at least one indexed event.
+ * Blocks with zero events are not observed by the block handler.
+ */
+export type BlockHandler = (context: BlockContext) => Promise<void> | void;
+
 // ---------------------------------------------------------------------------
 // Handler registry
 // ---------------------------------------------------------------------------
@@ -40,6 +67,7 @@ export type EventHandler = (event: DecodedEvent, context: HandlerContext) => Pro
 export class HandlerRegistry {
   private handlers = new Map<string, EventHandler[]>();
   private wildcardHandlers: EventHandler[] = [];
+  private blockHandlers: BlockHandler[] = [];
 
   /**
    * Register a handler for a specific event name.
@@ -58,6 +86,11 @@ export class HandlerRegistry {
     }
   }
 
+  /** Register a block handler. Fires once per block after all its events are dispatched. */
+  onBlock(handler: BlockHandler): void {
+    this.blockHandlers.push(handler);
+  }
+
   /** Dispatch an event to all matching handlers. Awaits async handlers in sequence. */
   async dispatch(event: DecodedEvent, context: HandlerContext): Promise<void> {
     const specific = this.handlers.get(event.eventName);
@@ -71,14 +104,26 @@ export class HandlerRegistry {
     }
   }
 
+  /** Dispatch a block-end signal to all block handlers. */
+  async dispatchBlock(context: BlockContext): Promise<void> {
+    for (const handler of this.blockHandlers) {
+      await handler(context);
+    }
+  }
+
+  /** Whether any block handlers are registered. */
+  get hasBlockHandlers(): boolean {
+    return this.blockHandlers.length > 0;
+  }
+
   /** List all registered event names (excluding wildcard). */
   registeredEvents(): string[] {
     return Array.from(this.handlers.keys());
   }
 
-  /** Total number of registered handlers (including wildcards). */
+  /** Total number of registered handlers (including wildcards and block handlers). */
   get handlerCount(): number {
-    let count = this.wildcardHandlers.length;
+    let count = this.wildcardHandlers.length + this.blockHandlers.length;
     for (const list of this.handlers.values()) {
       count += list.length;
     }

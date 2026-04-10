@@ -293,3 +293,122 @@ describe('createIndexer', () => {
     await expect(indexer.sync(1, 100)).rejects.toThrow('No EventSource');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Block handlers
+// ---------------------------------------------------------------------------
+
+describe('onBlock', () => {
+  it('fires once per block after all events in that block are dispatched', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+    const log: string[] = [];
+
+    indexer.on('Transferred', async (event) => {
+      log.push(`event:${event.blockNumber}:${event.txHash}`);
+    });
+    indexer.onBlock(async ({ blockNumber }) => {
+      log.push(`block:${blockNumber}`);
+    });
+
+    await indexer.processEvents([
+      makeEvent('Transferred', {}, { blockNumber: 10, txHash: 'tx1' }),
+      makeEvent('Transferred', {}, { blockNumber: 10, txHash: 'tx2' }),
+      makeEvent('Transferred', {}, { blockNumber: 11, txHash: 'tx3' }),
+    ]);
+
+    // Events fire before their block handler
+    expect(log).toEqual([
+      'event:10:tx1',
+      'event:10:tx2',
+      'block:10',       // fires after both block-10 events
+      'event:11:tx3',
+      'block:11',       // fires after block-11 event
+    ]);
+  });
+
+  it('fires exactly once per distinct block', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+    const blocksSeen: number[] = [];
+
+    indexer.onBlock(async ({ blockNumber }) => { blocksSeen.push(blockNumber); });
+
+    await indexer.processEvents([
+      makeEvent('X', {}, { blockNumber: 5, txHash: 'a' }),
+      makeEvent('X', {}, { blockNumber: 5, txHash: 'b' }),
+      makeEvent('X', {}, { blockNumber: 5, txHash: 'c' }),
+      makeEvent('X', {}, { blockNumber: 6, txHash: 'd' }),
+      makeEvent('X', {}, { blockNumber: 7, txHash: 'e' }),
+    ]);
+
+    expect(blocksSeen).toEqual([5, 6, 7]);
+  });
+
+  it('receives blockTimestamp in context', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+    let seenTs: number | undefined;
+
+    indexer.onBlock(async ({ blockTimestamp }) => { seenTs = blockTimestamp; });
+
+    await indexer.processEvents([
+      makeEvent('X', {}, { blockNumber: 10, blockTimestamp: 1712345678 }),
+    ]);
+
+    expect(seenTs).toBe(1712345678);
+  });
+
+  it('can write to the store', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+
+    indexer.onBlock(async ({ blockNumber, store }) => {
+      await store.set('Transfer', `candle:${blockNumber}`, {
+        txHash: `candle:${blockNumber}`,
+        from: 'system', to: 'system', value: 0n, block: blockNumber,
+      });
+    });
+
+    await indexer.processEvents([
+      makeEvent('X', {}, { blockNumber: 42, txHash: 'tx1' }),
+    ]);
+
+    const candle = await indexer.store.get('Transfer', 'candle:42');
+    expect(candle).toBeDefined();
+    expect(candle!['block']).toBe(42);
+  });
+
+  it('multiple block handlers all fire', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+    let a = 0, b = 0;
+
+    indexer.onBlock(async () => { a++; });
+    indexer.onBlock(async () => { b++; });
+
+    await indexer.processEvents([
+      makeEvent('X', {}, { blockNumber: 1, txHash: 'tx1' }),
+      makeEvent('X', {}, { blockNumber: 2, txHash: 'tx2' }),
+    ]);
+
+    expect(a).toBe(2);
+    expect(b).toBe(2);
+  });
+
+  it('increments blocksProcessed in stats', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+    indexer.onBlock(async () => {});
+
+    await indexer.processEvents([
+      makeEvent('X', {}, { blockNumber: 10, txHash: 'a' }),
+      makeEvent('X', {}, { blockNumber: 10, txHash: 'b' }),
+      makeEvent('X', {}, { blockNumber: 11, txHash: 'c' }),
+    ]);
+
+    expect(indexer.stats.blocksProcessed).toBe(2);
+  });
+
+  it('does not fire when no events are processed', async () => {
+    const indexer = await createIndexer({ schema, sink: adapter });
+    let fired = false;
+    indexer.onBlock(async () => { fired = true; });
+    await indexer.processEvents([]);
+    expect(fired).toBe(false);
+  });
+});

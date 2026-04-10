@@ -23,7 +23,7 @@ import type { EntityStore } from './store.js';
 import { createStore } from './store.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
-import { HandlerRegistry, type EventHandler, type HandlerContext } from './handler.js';
+import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerContext, type BlockContext } from './handler.js';
 import { decodeEvent } from './decoders/eventDecoders.js';
 import type { DecodedEvent } from './types.js';
 
@@ -43,12 +43,26 @@ export interface IndexerStats {
   eventsProcessed: number;
   eventsDecoded: number;
   eventsSkipped: number;
+  blocksProcessed: number;
   lastBlock: number;
 }
 
 export interface Indexer {
   /** Register a handler for an event name. Use '*' for all events. */
   on(eventName: string, handler: EventHandler): void;
+
+  /**
+   * Register a block handler. Fires once per block after all event handlers
+   * for that block have run. Only fires for blocks that contain at least one
+   * indexed event — empty blocks are not observed.
+   *
+   * Use this for candle closes, reserve snapshots, or any block-level aggregate:
+   *
+   *   indexer.onBlock(async ({ blockNumber, blockTimestamp, store }) => {
+   *     await store.set('Candle', String(blockNumber), { close: currentPrice, ... });
+   *   });
+   */
+  onBlock(handler: BlockHandler): void;
 
   /** Process a single decoded event through all matching handlers. */
   processEvent(event: DecodedEvent): Promise<void>;
@@ -115,6 +129,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     eventsProcessed: 0,
     eventsDecoded: 0,
     eventsSkipped: 0,
+    blocksProcessed: 0,
     lastBlock: 0,
   };
 
@@ -124,6 +139,10 @@ export async function createIndexer<S extends SchemaDefinition>(
       block: event.blockNumber,
       blockTimestamp: event.blockTimestamp,
     };
+  }
+
+  function makeBlockContext(blockNumber: number, blockTimestamp: number | undefined): BlockContext {
+    return { blockNumber, blockTimestamp, store };
   }
 
   async function dispatch(event: DecodedEvent): Promise<void> {
@@ -137,6 +156,11 @@ export async function createIndexer<S extends SchemaDefinition>(
       stats.eventsSkipped++;
     }
     await registry.dispatch(event, makeContext(event));
+  }
+
+  async function dispatchBlock(blockNumber: number, blockTimestamp: number | undefined): Promise<void> {
+    stats.blocksProcessed++;
+    await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
   }
 
   function requireSource(): EventSource {
@@ -153,13 +177,29 @@ export async function createIndexer<S extends SchemaDefinition>(
       registry.on(eventName, handler);
     },
 
+    onBlock(handler) {
+      registry.onBlock(handler);
+    },
+
     async processEvent(event) {
       await dispatch(event);
     },
 
     async processEvents(events) {
+      let currentBlock = -1;
+      let currentTimestamp: number | undefined;
+
       for (const event of events) {
+        if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
+          await dispatchBlock(currentBlock, currentTimestamp);
+        }
+        currentBlock     = event.blockNumber;
+        currentTimestamp = event.blockTimestamp;
         await dispatch(event);
+      }
+
+      if (currentBlock !== -1) {
+        await dispatchBlock(currentBlock, currentTimestamp);
       }
     },
 
@@ -183,17 +223,45 @@ export async function createIndexer<S extends SchemaDefinition>(
     async sync(fromBlock, toBlock, filters) {
       const source = requireSource();
       const events = await source.query(fromBlock, toBlock, filters);
+
+      let currentBlock = -1;
+      let currentTimestamp: number | undefined;
+
       for (const event of events) {
+        // Block boundary — fire block handlers for the completed block
+        if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
+          await dispatchBlock(currentBlock, currentTimestamp);
+        }
+        currentBlock    = event.blockNumber;
+        currentTimestamp = event.blockTimestamp;
         await dispatch(event);
       }
+
+      // Fire block handler for the final block
+      if (currentBlock !== -1) {
+        await dispatchBlock(currentBlock, currentTimestamp);
+      }
+
       return { ...stats };
     },
 
     subscribe(fromBlock, options) {
       const source = requireSource();
+      // Track block transitions so onBlock handlers fire after each block's events.
+      // The last block in a poll batch fires when the next batch brings a new block number.
+      let lastBlock     = -1;
+      let lastTimestamp: number | undefined;
+
       return source.subscribe(
         fromBlock,
-        async (event) => { await dispatch(event); },
+        async (event) => {
+          if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
+            await dispatchBlock(lastBlock, lastTimestamp);
+          }
+          lastBlock     = event.blockNumber;
+          lastTimestamp = event.blockTimestamp;
+          await dispatch(event);
+        },
         { pollIntervalMs: options?.pollIntervalMs },
       );
     },
@@ -211,6 +279,7 @@ export async function createIndexer<S extends SchemaDefinition>(
         eventsProcessed: 0,
         eventsDecoded: 0,
         eventsSkipped: 0,
+        blocksProcessed: 0,
         lastBlock: 0,
       };
     },

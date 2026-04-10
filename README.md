@@ -410,7 +410,7 @@ See `docker-compose.yml` for the full service definitions and `justfile` for all
 
 ```bash
 npm install
-npm test             # vitest (100 tests)
+npm test             # vitest (107 tests)
 npm run test:watch   # watch mode
 ```
 
@@ -418,11 +418,11 @@ Zero npm runtime dependencies — uses `node:sqlite` (Node 22+ built-in).
 
 ## Roadmap
 
-- [ ] Reorg handling — rollback derived state on chain reorgs
-- [ ] Block handlers — run logic every block, not just on events
+- [ ] Reorg handling — rollback derived `opkit_*` state on chain reorgs
+- [x] Block handlers — `indexer.onBlock(handler)` fires after every block's events are processed
 - [x] `RpcEventSource` — index directly from OPNET RPC, no OpStream required
 - [x] `createEventSource` — capability-probing factory (DB → RPC fallback)
-- [ ] Tier 2 EventSource — OpStream WebSocket/HTTP events endpoint (sub-second latency)
+- [ ] Tier 2 EventSource — OpStream WebSocket endpoint (sub-second latency, blocked on OpStream enriching its WebhookEvent payload)
 - [ ] CLI scaffolding (`opkit init`)
 
 ## License

@@ -9,7 +9,7 @@
 
 export { defineSchema, type Schema, type SchemaDefinition, type EntityDef, type FieldDef, type FieldType } from './schema.js';
 export { type EntityStore } from './store.js';
-export { HandlerRegistry, type HandlerContext, type EventHandler } from './handler.js';
+export { HandlerRegistry, type HandlerContext, type EventHandler, type BlockContext, type BlockHandler } from './handler.js';
 export { createIndexer, type Indexer, type IndexerConfig, type IndexerStats } from './indexer.js';
 
 // --- DB adapter ------------------------------------------------------------
