@@ -75,13 +75,13 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 
 - [x] `DbEventSource` — index from OpStream-ready SQLite / Postgres
 - [x] `RpcEventSource` — index directly from any OPNET RPC node
-- [x] `createEventSource` — capability-probing DB → RPC fallback factory
+- [x] `WsEventSource` — OpStream WebSocket push (sub-second latency)
+- [x] `createEventSource` — capability-probing DB → WS → RPC fallback factory
 - [x] Block handlers — `indexer.onBlock(handler)`
 - [x] GraphQL API — auto-generated schema, cursor pagination, GraphiQL playground
 - [x] GraphQL subscriptions — `serve({ subscriptions: true })` via `graphql-ws`
+- [x] CLI scaffolding — `npx @opnet-devs/opkit init`
 - [ ] Reorg handling — rollback `opkit_*` state on chain reorgs
-- [ ] Tier 2 EventSource — OpStream WebSocket push (sub-second latency)
-- [ ] CLI scaffolding — `opkit init`
 
 ## License
 
