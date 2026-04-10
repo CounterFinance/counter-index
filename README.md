@@ -16,10 +16,21 @@ OpKit reads raw chain events from an **OpStream-ready database** (source) and wr
 indexed state into its own tables (sink). Source and sink can be the same database instance or
 separate — your choice at runtime.
 
-**OpKit is a Node.js server-side library.** It is not a frontend library and cannot run in a
-browser. Your frontend (or any HTTP client) reads from the `opkit_*` tables OpKit maintains —
-through a database connection or an HTTP API layer you build on top. OpKit's job is to keep those
-tables accurate and up to date.
+**OpKit is a library, not a runnable app.** It has no entry point — you import it, write your
+schema and handlers, and run *your* app. OpKit is the engine; your indexer is the shell around it:
+
+```
+your-indexer/
+  src/
+    main.ts          ← ~30 lines: import OpKit, wire schema + handlers, call sync()
+    handlers/
+      swaps.ts       ← your business logic
+  Dockerfile         ← runs main.ts (see OpKit/Dockerfile template)
+```
+
+**OpKit is Node.js server-side only.** It cannot run in a browser (`node:sqlite`, no FS). Your
+frontend or any HTTP client reads from the `opkit_*` tables OpKit maintains — through a database
+connection or an HTTP API layer you build on top.
 
 ## Requirements
 
@@ -338,6 +349,38 @@ tests/
   tokens.test.ts
   decoders.test.ts
 ```
+
+## Deployment
+
+OpKit ships a `Dockerfile` template and `docker-compose.yml` for running the full stack.
+
+**`Dockerfile`** — a starting point for your indexer app. Copy it to your project, update the
+`COPY` paths and `CMD` to point at your `src/main.ts`, and build:
+
+```bash
+# From the Opnet-devs/ parent (required for the file:../OpKit dep)
+docker build -f MyIndexer/Dockerfile -t my-indexer ..
+```
+
+**`docker-compose.yml`** — wires OpStream (chain scanner) + your indexer together:
+
+```
+opstream       → scans blocks → writes opstream.db
+opkit-indexer  → reads opstream.db (source) → writes opkit.db (sink)
+```
+
+SQLite: two separate DB files on a shared Docker volume.
+Postgres: same instance, `opkit_*` prefix prevents table collisions.
+
+```bash
+# SQLite (default)
+just docker-up
+
+# Postgres (bundled)
+just docker-up -- --profile postgres
+```
+
+See `docker-compose.yml` for the full service definitions and `justfile` for all commands.
 
 ## Development
 

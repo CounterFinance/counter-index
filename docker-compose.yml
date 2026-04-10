@@ -2,7 +2,7 @@
 #
 # Shows OpStream (data source) + an OpKit-based indexer running side by side.
 # The "opkit-indexer" service is a PLACEHOLDER — replace it with your own
-# indexer (e.g., your-app) once it has a Dockerfile and entry point.
+# indexer app once it has a Dockerfile and entry point.
 #
 # ── SQLite (default — two separate DB files on a shared volume) ───────────────
 #   Run from the Opnet-devs/ parent directory:
@@ -51,7 +51,7 @@ services:
 
   # ── OpKit-based indexer — reads opstream.db, writes opkit.db ─────────────────
   #
-  # REPLACE THIS SERVICE with your actual indexer (e.g., your-app).
+  # REPLACE THIS SERVICE with your actual indexer app.
   # Steps:
   #   1. Create your indexer directory with a Dockerfile (see OpKit/Dockerfile).
   #   2. Update `build.dockerfile` to point at your indexer's Dockerfile.

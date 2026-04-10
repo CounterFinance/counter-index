@@ -1,7 +1,7 @@
 # OpKit — Dockerfile template for indexer apps built with OpKit
 #
 # OpKit is a library — it has no entry point of its own. This file is a
-# starting point for YOUR indexer service (e.g., your-app).
+# starting point for YOUR indexer service.
 #
 # How to adapt:
 #   1. Copy this file to your indexer project root.
