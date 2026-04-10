@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { SqliteAdapter } from '../src/adapter.js';
 import { DbEventSource } from '../src/source.js';
 
@@ -44,7 +44,7 @@ const OPSTREAM_SCHEMA = `
 `;
 
 function makeSourceAdapter() {
-  const db = new DatabaseSync(':memory:');
+  const db = new Database(':memory:');
   db.exec(OPSTREAM_SCHEMA);
 
   // Seed blocks

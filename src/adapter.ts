@@ -4,13 +4,22 @@
  * Structurally identical to @opnet-devs/opstream's DbAdapter. Pass the OpStream
  * adapter directly and TypeScript accepts it via structural typing — no import needed.
  *
- * OpKit also ships its own SqliteAdapter backed by node:sqlite (Node 22+ built-in)
- * for standalone use and unit tests without OpStream.
+ * OpKit also ships its own SqliteAdapter backed by better-sqlite3 for standalone
+ * use and unit tests without OpStream.
  */
 
-import { DatabaseSync, type StatementSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+
+type DB = ReturnType<typeof Database>;
+
+// Narrow internal interface — avoids spreading into better-sqlite3's conditional rest type.
+type Stmt = {
+  run(...params: unknown[]): unknown;
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+};
 
 // ---------------------------------------------------------------------------
 // Interface
@@ -26,17 +35,17 @@ export interface MinimalDbAdapter {
 }
 
 // ---------------------------------------------------------------------------
-// SqliteAdapter — node:sqlite built-in, no npm runtime deps
+// SqliteAdapter — better-sqlite3
 // ---------------------------------------------------------------------------
 
 export class SqliteAdapter implements MinimalDbAdapter {
   readonly dialect = 'sqlite' as const;
 
-  private readonly _cache = new Map<string, StatementSync>();
+  private readonly _cache = new Map<string, Stmt>();
 
-  constructor(public readonly rawDb: DatabaseSync) {}
+  constructor(public readonly rawDb: DB) {}
 
-  private stmt(sql: string): StatementSync {
+  private stmt(sql: string): Stmt {
     let s = this._cache.get(sql);
     if (!s) {
       s = this.rawDb.prepare(sql);
@@ -46,25 +55,21 @@ export class SqliteAdapter implements MinimalDbAdapter {
   }
 
   async run(sql: string, params: unknown[] = []): Promise<void> {
-    this.stmt(sql).run(...(params as Parameters<StatementSync['run']>));
+    this.stmt(sql).run(...params);
   }
 
   async get<T = Record<string, unknown>>(
     sql: string,
     params: unknown[] = [],
   ): Promise<T | undefined> {
-    return this.stmt(sql).get(
-      ...(params as Parameters<StatementSync['get']>),
-    ) as T | undefined;
+    return this.stmt(sql).get(...params) as T | undefined;
   }
 
   async all<T = Record<string, unknown>>(
     sql: string,
     params: unknown[] = [],
   ): Promise<T[]> {
-    return this.stmt(sql).all(
-      ...(params as Parameters<StatementSync['all']>),
-    ) as T[];
+    return this.stmt(sql).all(...params) as T[];
   }
 
   async exec(sql: string): Promise<void> {
@@ -97,8 +102,9 @@ export function openSqlite(path: string): SqliteAdapter {
   if (dir && dir !== '.' && !existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+  const db = new Database(path);
+  db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
   return new SqliteAdapter(db);
 }
 
@@ -107,5 +113,5 @@ export function openSqlite(path: string): SqliteAdapter {
  * the process exits. Not for production use.
  */
 export function createTestAdapter(): SqliteAdapter {
-  return new SqliteAdapter(new DatabaseSync(':memory:'));
+  return new SqliteAdapter(new Database(':memory:'));
 }

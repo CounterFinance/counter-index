@@ -48,7 +48,7 @@ const files = {
   "name": "${projectName}",
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=22.0.0" },
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
     "start": "node --import tsx/esm src/main.ts",
     "dev":   "node --import tsx/esm --watch src/main.ts",
@@ -59,7 +59,7 @@ const files = {
     "opnet": "^1.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0"
   }
@@ -103,26 +103,32 @@ FROM_BLOCK=941400
 PORT=4000
 `,
 
-  'Dockerfile': `# Two-stage build: compile TypeScript in stage 1, run compiled JS in stage 2.
+  'Dockerfile': `# Two-stage build: compile TypeScript + native modules in stage 1, run compiled JS in stage 2.
 # Build context: parent directory of ${projectName}
 #   docker build -f ${projectName}/Dockerfile -t ${projectName} ..
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
+
+# Native addon build tools (required for better-sqlite3)
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /build
 COPY package*.json ./
 RUN npm install
 COPY src ./src
 COPY tsconfig.json ./
 RUN npm run build   # compiles src/ → dist/
+RUN npm prune --omit=dev  # strip devDeps, keep compiled native modules
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
-FROM node:22-alpine
+FROM node:24-alpine
 RUN apk add --no-cache dumb-init
 WORKDIR /app
 
+# Copy pruned node_modules (includes compiled better-sqlite3 binary — no recompile needed)
 COPY --from=builder /build/package*.json ./
-RUN npm install --omit=dev
+COPY --from=builder /build/node_modules  ./node_modules
 COPY --from=builder /build/dist ./dist
 
 RUN mkdir -p /app/data && \\

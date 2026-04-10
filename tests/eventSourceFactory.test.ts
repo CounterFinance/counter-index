@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
 import { SqliteAdapter } from '../src/adapter.js';
 import { DbEventSource } from '../src/source.js';
 import { RpcEventSource, type BlockProvider } from '../src/rpcSource.js';
@@ -22,13 +22,13 @@ const OPSTREAM_SCHEMA = `
 `;
 
 function makeOpStreamAdapter(): SqliteAdapter {
-  const db = new DatabaseSync(':memory:');
+  const db = new Database(':memory:');
   db.exec(OPSTREAM_SCHEMA);
   return new SqliteAdapter(db);
 }
 
 function makeEmptyAdapter(): SqliteAdapter {
-  const db = new DatabaseSync(':memory:');
+  const db = new Database(':memory:');
   // No tables — not OpStream-ready
   return new SqliteAdapter(db);
 }
@@ -52,7 +52,7 @@ describe('probeOpStreamSchema', () => {
   });
 
   it('returns false when only some tables exist', async () => {
-    const db = new DatabaseSync(':memory:');
+    const db = new Database(':memory:');
     db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY)'); // missing transactions + blocks
     const adapter = new SqliteAdapter(db);
     expect(await probeOpStreamSchema(adapter)).toBe(false);

@@ -11,11 +11,14 @@
 # Or use docker-compose.yml (which sets context: .. automatically).
 #
 # ─── Two-stage build ─────────────────────────────────────────────────────────
-# Stage 1 compiles TypeScript → JavaScript.
-# Stage 2 runs only the compiled output — no TypeScript compiler in production.
+# Stage 1 compiles TypeScript → JavaScript and compiles native modules (better-sqlite3).
+# Stage 2 copies the compiled output — no build tools or TypeScript compiler in production.
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
+
+# Native addon build tools (required for better-sqlite3)
+RUN apk add --no-cache python3 make g++
 
 WORKDIR /build
 
@@ -31,17 +34,18 @@ COPY MyIndexer/src        ./src/
 COPY MyIndexer/tsconfig.json ./
 
 RUN npm run build   # compiles src/ → dist/
+RUN npm prune --omit=dev  # strip devDeps, keep compiled native modules
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
-FROM node:22-alpine
+FROM node:24-alpine
 
 RUN apk add --no-cache dumb-init
 
 WORKDIR /app
 
-# Production deps only
+# Copy pruned node_modules (includes compiled better-sqlite3 binary — no recompile needed)
 COPY --from=builder /build/package*.json ./
-RUN npm install --omit=dev
+COPY --from=builder /build/node_modules  ./node_modules
 
 # Compiled output
 COPY --from=builder /build/dist ./dist
