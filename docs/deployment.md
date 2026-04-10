@@ -47,32 +47,60 @@ just scaffold my-indexer
 
 ## Dockerfile
 
-OpKit ships a `Dockerfile` template. Copy it to your indexer project and update the `COPY`
-paths and `CMD` to match your entry point:
+OpKit ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript; stage 2 runs
+only the compiled output — no TypeScript compiler in production.
+
+Copy it to your indexer and update the four `STEP` comments:
 
 ```dockerfile
-# Build context must be the Opnet-devs/ parent directory so both
-# OpKit and MyIndexer are available to the builder.
-# docker build -f MyIndexer/Dockerfile -t my-indexer ..
+# Build context: Opnet-devs/ parent directory
+# docker build -f MyIndexer/Dockerfile -t my-indexer .
 
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+FROM node:22-alpine AS builder
+WORKDIR /build
+
+# STEP 1 — copy OpKit source (file: dependency)
+COPY OpKit/package*.json /OpKit/
+COPY OpKit/src           /OpKit/src/
+COPY OpKit/tsconfig.json /OpKit/
+
+# STEP 2 — replace "MyIndexer" with your project name
+COPY MyIndexer/package*.json ./
+RUN npm install
+COPY MyIndexer/src        ./src/
+COPY MyIndexer/tsconfig.json ./
+RUN npm run build          # compiles src/ → dist/
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine
 RUN apk add --no-cache dumb-init
 WORKDIR /app
 
-# Copy OpKit source (local file: dependency)
-COPY OpKit/package*.json /OpKit/
-COPY OpKit/src           /OpKit/src/
-
-# Copy your indexer
-COPY MyIndexer/package*.json ./
+COPY --from=builder /build/package*.json ./
 RUN npm install --omit=dev
-COPY MyIndexer/src ./src
+COPY --from=builder /build/dist  ./dist
+COPY --from=builder /OpKit/src   /OpKit/src/
+COPY --from=builder /OpKit/package.json /OpKit/
 
-RUN addgroup -S opkit && adduser -S opkit -G opkit
-USER opkit
+RUN mkdir -p /app/data && \
+    addgroup -g 1001 -S indexer && \
+    adduser  -u 1001 -S indexer -G indexer && \
+    chown -R indexer:indexer /app /OpKit
+USER indexer
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "--experimental-vm-modules", "src/main.ts"]
+CMD ["node", "dist/main.js"]
+```
+
+A `.dockerignore` prevents `node_modules/` and `.db` files from bloating the build context:
+
+```
+node_modules/
+dist/
+.git/
+*.db
+.env
 ```
 
 ## docker-compose.yml

@@ -85,6 +85,17 @@ dist/
 .env
 `,
 
+  '.dockerignore': `node_modules/
+dist/
+.git/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+`,
+
   '.env.example': `OPSTREAM_DB_PATH=/data/opstream.db
 OPKIT_DB_PATH=/data/opkit.db
 OPSTREAM_WS_URL=ws://localhost:8080
@@ -92,23 +103,36 @@ FROM_BLOCK=941400
 PORT=4000
 `,
 
-  'Dockerfile': `# Build context: parent directory of ${projectName}
-# docker build -f ${projectName}/Dockerfile -t ${projectName} ..
+  'Dockerfile': `# Two-stage build: compile TypeScript in stage 1, run compiled JS in stage 2.
+# Build context: parent directory of ${projectName}
+#   docker build -f ${projectName}/Dockerfile -t ${projectName} ..
 
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+FROM node:22-alpine AS builder
+WORKDIR /build
+COPY package*.json ./
+RUN npm install
+COPY src ./src
+COPY tsconfig.json ./
+RUN npm run build   # compiles src/ → dist/
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine
 RUN apk add --no-cache dumb-init
 WORKDIR /app
 
-COPY package*.json ./
+COPY --from=builder /build/package*.json ./
 RUN npm install --omit=dev
+COPY --from=builder /build/dist ./dist
 
-COPY src ./src
-
-RUN addgroup -S opkit && adduser -S opkit -G opkit
-USER opkit
+RUN mkdir -p /app/data && \\
+    addgroup -g 1001 -S indexer && \\
+    adduser  -u 1001 -S indexer -G indexer && \\
+    chown -R indexer:indexer /app
+USER indexer
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "--import", "tsx/esm", "src/main.ts"]
+CMD ["node", "dist/main.js"]
 `,
 
   'docker-compose.yml': `services:
