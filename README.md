@@ -194,38 +194,62 @@ event.revertReason    // revert message string, if failed
 
 ### Source and Sink Connections
 
-**Source** — where OpKit reads raw chain events from. Points at an OpStream-ready database.
-Read-only from OpKit's perspective.
+**Source** — where OpKit reads raw chain events from. Two implementations available:
+
+| | `DbEventSource` | `RpcEventSource` |
+|---|---|---|
+| Requires | OpStream-ready DB | Any OPNET RPC node |
+| Backfill speed | Sub-millisecond (SQL) | O(N) getBlock calls |
+| Context richness | Full (tx + block JOINs) | Full (RPC tx fields) |
+| Recommended for | Production | Lightweight / no OpStream |
 
 **Sink** — where OpKit writes derived tables. OpKit owns this connection.
 
 ```ts
-// SQLite — two separate files (recommended for local setups)
+// ── Option 1: OpStream DB (fast — recommended) ────────────────────────────
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
 const sink   = openSqlite('/data/opkit.db');
 
-// Postgres — pass any MinimalDbAdapter-compatible adapter as source or sink.
+// ── Option 2: Direct RPC (no OpStream needed) ─────────────────────────────
+import { JSONRpcProvider } from 'opnet';
+const source = new RpcEventSource(
+  new JSONRpcProvider('https://mainnet.opnet.org'),
+  { rpsLimit: 5 },   // ~5 req/s — conservative default
+);
+const sink = openSqlite('/data/opkit.db');
+
+// ── Option 3: Smart factory — probes DB first, falls back to RPC ──────────
+// Give it what you have; it picks the fastest available engine automatically.
+import { JSONRpcProvider } from 'opnet';
+const source = await createEventSource({
+  db:  '/data/opstream.db',                              // Tier 1: try OpStream DB
+  rpc: new JSONRpcProvider('https://mainnet.opnet.org'), // Tier 3: RPC fallback
+});
+// → DbEventSource if opstream.db is ready, RpcEventSource otherwise
+
+// ── Postgres ──────────────────────────────────────────────────────────────
 // OpKit's MinimalDbAdapter interface is structurally identical to
-// @opnet-devs/opstream's DbAdapter, so the OpStream adapter passes through
-// directly with no import needed.
-//
-// Example using OpStream's PostgresAdapter:
+// @opnet-devs/opstream's DbAdapter — pass OpStream's adapter directly.
 //   const source = new DbEventSource(await openPostgresDb(OPSTREAM_DB_URL));
 //   const sink   = await openPostgresDb(OPKIT_DB_URL);
 //   const indexer = await createIndexer({ schema, sink, source });
 //
-// Source and sink can be the same Postgres database (opkit_* prefix avoids
-// table collisions) or separate databases in the same instance.
+// Source and sink can be the same Postgres instance (opkit_* prefix avoids
+// table collisions) or separate databases.
 ```
+
+> **RpcEventSource speed:** backfilling 10,000 blocks takes ~2,000 RPC calls at 5 req/s
+> (~7 minutes). `DbEventSource` does the same in milliseconds via a single SQL query.
+> Use `RpcEventSource` for lightweight indexers watching recent blocks; use `DbEventSource`
+> backed by OpStream for full-history backfills.
 
 ### Backfill and Live Indexing
 
-**How it works today:** `sync()` runs a single bulk SQL query against OpStream's `events` table
-(with JOINs for tx and block context). `subscribe()` polls that same table on an interval —
+**How it works today:** `sync()` runs a bulk query against the event source (SQL for
+`DbEventSource`, getBlock loop for `RpcEventSource`). `subscribe()` polls on an interval —
 there is no WebSocket push yet. On OPNET's current ~20 blocks/minute pace a 10-second poll
-interval means at most ~3 blocks of lag, which is well within acceptable range for any
-non-latency-critical use case. A `RpcEventSource` backed by OpStream's WebSocket broadcast
-server is on the roadmap for when sub-second latency or remote deployment matters.
+interval means at most ~3 blocks of lag, acceptable for any non-latency-critical use case.
+A Tier-2 WebSocket source (OpStream broadcast server) is on the roadmap for sub-second latency.
 
 ```ts
 // Backfill a block range (bulk SQL query, single round-trip)
@@ -386,7 +410,7 @@ See `docker-compose.yml` for the full service definitions and `justfile` for all
 
 ```bash
 npm install
-npm test             # vitest (76 tests)
+npm test             # vitest (100 tests)
 npm run test:watch   # watch mode
 ```
 
@@ -396,7 +420,9 @@ Zero npm runtime dependencies — uses `node:sqlite` (Node 22+ built-in).
 
 - [ ] Reorg handling — rollback derived state on chain reorgs
 - [ ] Block handlers — run logic every block, not just on events
-- [ ] `RpcEventSource` — subscribe to OpStream's WebSocket instead of polling DB
+- [x] `RpcEventSource` — index directly from OPNET RPC, no OpStream required
+- [x] `createEventSource` — capability-probing factory (DB → RPC fallback)
+- [ ] Tier 2 EventSource — OpStream WebSocket/HTTP events endpoint (sub-second latency)
 - [ ] CLI scaffolding (`opkit init`)
 
 ## License

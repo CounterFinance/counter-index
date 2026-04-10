@@ -30,6 +30,21 @@ export {
   type UnsubscribeFn,
 } from './source.js';
 
+export {
+  RpcEventSource,
+  type BlockProvider,
+  type BlockLike,
+  type TransactionLike,
+  type RpcEventSourceOptions,
+} from './rpcSource.js';
+
+export {
+  createEventSource,
+  probeOpStreamSchema,
+  type EventSourceInput,
+  type CreateEventSourceOptions,
+} from './eventSourceFactory.js';
+
 // --- Types -----------------------------------------------------------------
 
 export type { DecodedEvent } from './types.js';
