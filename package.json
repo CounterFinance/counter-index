@@ -10,12 +10,23 @@
     "opkit": "bin/opkit.js"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*"
+    ".": {
+      "import": "./dist/src/index.js",
+      "types":  "./dist/src/index.d.ts"
+    }
   },
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "build":      "tsc",
+    "test":       "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
