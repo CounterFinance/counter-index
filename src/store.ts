@@ -1,7 +1,7 @@
 /**
  * Entity store — DB-backed indexed data store.
  *
- * Each entity defined in the schema gets its own `opkit_<entity>` table
+ * Each entity defined in the schema gets its own `opindex_<entity>` table
  * (lowercase). Tables are created automatically when the store is initialised.
  * All operations are async — the underlying adapter may be synchronous SQLite
  * or async Postgres; callers don't need to know which.
@@ -9,7 +9,7 @@
  * BigInt fields are serialised as decimal strings (TEXT) since SQL has no
  * native bigint type. They are deserialised back to BigInt on read.
  *
- * Table prefix `opkit_` prevents collisions with OpStream's raw tables when
+ * Table prefix `opindex_` prevents collisions with OpStream's raw tables when
  * both use the same database.
  */
 
@@ -66,7 +66,7 @@ export interface EntityStore {
 // SQL type mapping
 // ---------------------------------------------------------------------------
 
-const TABLE_PREFIX = 'opkit_';
+const TABLE_PREFIX = 'opindex_';
 
 function fieldTypeSql(type: FieldType, dialect: 'sqlite' | 'postgres'): string {
   switch (type) {

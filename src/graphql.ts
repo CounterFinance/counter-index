@@ -1,5 +1,5 @@
 /**
- * GraphQL API layer for OpKit.
+ * GraphQL API layer for op-index.
  *
  * Automatically generates a GraphQL schema + resolvers from the defineSchema()
  * entity definitions and serves them over HTTP (and optionally WebSocket).
@@ -511,7 +511,7 @@ export async function startSubscriptionServer(
     WebSocketServer = wsLib['WebSocketServer'] as typeof WebSocketServer;
   } catch {
     throw new Error(
-      '[OpKit] subscriptions: true requires peer dependencies — run: npm install graphql-ws ws',
+      '[op-index] subscriptions: true requires peer dependencies — run: npm install graphql-ws ws',
     );
   }
 
@@ -527,7 +527,7 @@ const GRAPHIQL_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>OpKit — GraphiQL</title>
+  <title>op-index — GraphiQL</title>
   <link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css" />
   <style>body { margin: 0; } #graphiql { height: 100vh; }</style>
 </head>

@@ -1,8 +1,8 @@
 /**
- * @opnet-devs/opkit — Indexer framework for OPNET.
+ * @opnet-devs/op-index — Indexer framework for OPNET.
  *
  * Define a schema. Register event handlers. Feed chain data via sync() or subscribe().
- * Query your indexed entities from the DB OpKit manages.
+ * Query your indexed entities from the DB op-index manages.
  */
 
 // --- Core framework --------------------------------------------------------

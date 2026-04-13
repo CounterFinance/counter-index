@@ -1,5 +1,5 @@
 {
-  "name": "@opnet-devs/opkit",
+  "name": "@opnet-devs/op-index",
   "version": "0.1.0",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
   "type": "module",
@@ -7,7 +7,7 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "opkit": "bin/opkit.js"
+    "op-index": "bin/op-index.js"
   },
   "exports": {
     ".": {

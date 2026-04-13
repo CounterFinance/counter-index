@@ -1,14 +1,14 @@
-# OpKit
+# op-index
 
 Indexer framework for [OPNET](https://opnet.org) (Bitcoin L2). Define a schema, handle chain
 events, persist derived state to SQLite or Postgres, and serve it over a GraphQL API with
 cursor pagination and live subscriptions — all auto-generated from your schema, zero codegen.
 
 ```
-OpStream DB ──→ DbEventSource ──→ OpKit handlers ──→ opkit_* tables
-  (or OPNET RPC)                                           ↓
-                                                   indexer.serve()
-                                                           ↓
+OpStream DB ──→ DbEventSource ──→ op-index handlers ──→ opindex_* tables
+  (or OPNET RPC)                                              ↓
+                                                      indexer.serve()
+                                                              ↓
                                           GraphQL (HTTP + WebSocket) ──→ Frontend
 ```
 
@@ -20,13 +20,13 @@ OpStream DB ──→ DbEventSource ──→ OpKit handlers ──→ opkit_* t
 ## Install
 
 ```bash
-npm install @opnet-devs/opkit
+npm install @opnet-devs/op-index
 ```
 
 ## Minimal example
 
 ```ts
-import { defineSchema, createIndexer, DbEventSource, openSqlite } from '@opnet-devs/opkit';
+import { defineSchema, createIndexer, DbEventSource, openSqlite } from '@opnet-devs/op-index';
 
 const schema = defineSchema({
   Transfer: {
@@ -38,7 +38,7 @@ const schema = defineSchema({
 });
 
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opkit.db');
+const sink   = openSqlite('/data/opindex.db');
 
 const indexer = await createIndexer({ schema, sink, source });
 
@@ -80,8 +80,8 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 - [x] Block handlers — `indexer.onBlock(handler)`
 - [x] GraphQL API — auto-generated schema, cursor pagination, GraphiQL playground
 - [x] GraphQL subscriptions — `serve({ subscriptions: true })` via `graphql-ws`
-- [x] CLI scaffolding — `npx @opnet-devs/opkit init`
-- [ ] Reorg handling — rollback `opkit_*` state on chain reorgs
+- [x] CLI scaffolding — `npx @opnet-devs/op-index init`
+- [ ] Reorg handling — rollback `opindex_*` state on chain reorgs
 
 ## License
 

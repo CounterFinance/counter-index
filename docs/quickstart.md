@@ -5,11 +5,11 @@ subscribes to new ones, and serves a GraphQL API your frontend can query.
 
 ## 1. Define your schema
 
-Everything starts with `defineSchema`. Declare the entities you want to index — OpKit creates
-one SQL table per entity in your sink database, prefixed `opkit_` to avoid collisions.
+Everything starts with `defineSchema`. Declare the entities you want to index — op-index creates
+one SQL table per entity in your sink database, prefixed `opindex_` to avoid collisions.
 
 ```ts
-import { defineSchema } from '@opnet-devs/opkit';
+import { defineSchema } from '@opnet-devs/op-index';
 
 const schema = defineSchema({
   Account: {
@@ -32,21 +32,21 @@ See [Schema](./schema.md) for all field types and options.
 
 ## 2. Open source and sink connections
 
-**Source** — where OpKit reads raw chain events from.
-**Sink** — where OpKit writes your derived `opkit_*` tables.
+**Source** — where op-index reads raw chain events from.
+**Sink** — where op-index writes your derived `opindex_*` tables.
 
 ```ts
-import { DbEventSource, openSqlite } from '@opnet-devs/opkit';
+import { DbEventSource, openSqlite } from '@opnet-devs/op-index';
 
 // Fast path — OpStream-ready database (recommended for production)
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opkit.db');
+const sink   = openSqlite('/data/opindex.db');
 ```
 
 No OpStream? Use the RPC source instead:
 
 ```ts
-import { RpcEventSource } from '@opnet-devs/opkit';
+import { RpcEventSource } from '@opnet-devs/op-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = new RpcEventSource(
@@ -55,10 +55,10 @@ const source = new RpcEventSource(
 );
 ```
 
-Or let OpKit probe and decide automatically:
+Or let op-index probe and decide automatically:
 
 ```ts
-import { createEventSource } from '@opnet-devs/opkit';
+import { createEventSource } from '@opnet-devs/op-index';
 
 const source = await createEventSource({
   db:  '/data/opstream.db',                              // fast if present
@@ -70,18 +70,18 @@ See [Sources](./sources.md) for Postgres, custom adapters, and the full options 
 
 ## 3. Create the indexer
 
-`createIndexer` is async — it creates the `opkit_*` tables in your sink database on first run
+`createIndexer` is async — it creates the `opindex_*` tables in your sink database on first run
 and is a no-op on subsequent runs.
 
 ```ts
-import { createIndexer } from '@opnet-devs/opkit';
+import { createIndexer } from '@opnet-devs/op-index';
 
 const indexer = await createIndexer({ schema, sink, source });
 ```
 
 ## 4. Register handlers
 
-Handlers are async functions that fire when a specific event name is seen. OpKit calls them in
+Handlers are async functions that fire when a specific event name is seen. op-index calls them in
 the order they were registered, awaiting each one before moving to the next.
 
 ```ts
@@ -111,7 +111,7 @@ Use `'*'` to catch every event regardless of name:
 
 ```ts
 indexer.on('*', async (event, ctx) => {
-  // fires for every event OpKit sees
+  // fires for every event op-index sees
 });
 ```
 
@@ -228,7 +228,7 @@ See [Store](./store.md) for the full API.
 import {
   defineSchema, createIndexer,
   DbEventSource, openSqlite,
-} from '@opnet-devs/opkit';
+} from '@opnet-devs/op-index';
 
 const schema = defineSchema({
   Account: {
@@ -247,7 +247,7 @@ const schema = defineSchema({
 });
 
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opkit.db');
+const sink   = openSqlite('/data/opindex.db');
 const indexer = await createIndexer({ schema, sink, source });
 
 indexer.on('Transferred', async (event, ctx) => {

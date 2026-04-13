@@ -1,33 +1,33 @@
 # Deployment
 
-OpKit is a library — it has no entry point of its own. You deploy *your indexer app*, which
-imports OpKit and wires everything together. This guide covers the recommended way to do that
+op-index is a library — it has no entry point of its own. You deploy *your indexer app*, which
+imports op-index and wires everything together. This guide covers the recommended way to do that
 with Docker and docker-compose.
 
 ## Project layout
 
-The recommended layout for a project built on OpKit:
+The recommended layout for a project built on op-index:
 
 ```
 Opnet-devs/
-  OpKit/                  ← OpKit library (this repo)
+  op-index/               ← op-index library (this repo)
   MyIndexer/              ← your indexer app
     src/
       main.ts             ← entry point (~50 lines)
       handlers/
         transfers.ts      ← your event handlers
-    Dockerfile            ← copy of OpKit/Dockerfile, customised
+    Dockerfile            ← copy of op-index/Dockerfile, customised
     docker-compose.yml    ← wires OpStream + your indexer together
-    package.json          ← depends on file:../OpKit
+    package.json          ← depends on file:../op-index
     tsconfig.json
 ```
 
 ## Scaffold a new indexer
 
-The fastest way to start is `npx @opnet-devs/opkit init`:
+The fastest way to start is `npx @opnet-devs/op-index init`:
 
 ```bash
-npx @opnet-devs/opkit init my-indexer
+npx @opnet-devs/op-index init my-indexer
 # Creates my-indexer/ in the current directory with:
 #   package.json, tsconfig.json, .gitignore, .env.example
 #   src/main.ts, src/handlers/transfers.ts
@@ -37,17 +37,17 @@ cd my-indexer && npm install && npm run dev
 
 No monorepo required — works anywhere Node ≥ 22 and npx are available.
 
-If you are working inside the OpKit monorepo, the `just scaffold` command does the same thing:
+If you are working inside the op-index monorepo, the `just scaffold` command does the same thing:
 
 ```bash
-cd OpKit
+cd op-index
 just scaffold my-indexer
 # Creates ../my-indexer/ — identical output
 ```
 
 ## Dockerfile
 
-OpKit ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript; stage 2 runs
+op-index ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript; stage 2 runs
 only the compiled output — no TypeScript compiler in production.
 
 Copy it to your indexer and update the four `STEP` comments:
@@ -60,10 +60,10 @@ Copy it to your indexer and update the four `STEP` comments:
 FROM node:22-alpine AS builder
 WORKDIR /build
 
-# STEP 1 — copy OpKit source (file: dependency)
-COPY OpKit/package*.json /OpKit/
-COPY OpKit/src           /OpKit/src/
-COPY OpKit/tsconfig.json /OpKit/
+# STEP 1 — copy op-index source (file: dependency)
+COPY op-index/package*.json /op-index/
+COPY op-index/src           /op-index/src/
+COPY op-index/tsconfig.json /op-index/
 
 # STEP 2 — replace "MyIndexer" with your project name
 COPY MyIndexer/package*.json ./
@@ -80,13 +80,13 @@ WORKDIR /app
 COPY --from=builder /build/package*.json ./
 RUN npm install --omit=dev
 COPY --from=builder /build/dist  ./dist
-COPY --from=builder /OpKit/src   /OpKit/src/
-COPY --from=builder /OpKit/package.json /OpKit/
+COPY --from=builder /op-index/src   /op-index/src/
+COPY --from=builder /op-index/package.json /op-index/
 
 RUN mkdir -p /app/data && \
     addgroup -g 1001 -S indexer && \
     adduser  -u 1001 -S indexer -G indexer && \
-    chown -R indexer:indexer /app /OpKit
+    chown -R indexer:indexer /app /op-index
 USER indexer
 
 ENTRYPOINT ["dumb-init", "--"]
@@ -105,7 +105,7 @@ dist/
 
 ## docker-compose.yml
 
-OpKit's `docker-compose.yml` wires OpStream and your indexer together on a shared volume:
+op-index's `docker-compose.yml` wires OpStream and your indexer together on a shared volume:
 
 ```yaml
 services:
@@ -116,7 +116,7 @@ services:
     environment:
       - OPSTREAM_DB_PATH=/data/opstream.db
 
-  opkit-indexer:
+  op-index-indexer:
     build:
       context: ..
       dockerfile: MyIndexer/Dockerfile
@@ -124,7 +124,7 @@ services:
       - chain_data:/data
     environment:
       - OPSTREAM_DB_PATH=/data/opstream.db
-      - OPKIT_DB_PATH=/data/opkit.db
+      - OPINDEX_DB_PATH=/data/opindex.db
       - FROM_BLOCK=941400
     ports:
       - "4000:4000"   # GraphQL API
@@ -135,7 +135,7 @@ volumes:
   chain_data:
 ```
 
-SQLite: both services mount the same named volume — `opstream.db` and `opkit.db` live side by side.
+SQLite: both services mount the same named volume — `opstream.db` and `opindex.db` live side by side.
 
 For Postgres, add the bundled Postgres profile:
 
@@ -156,7 +156,7 @@ volumes:
 
 ## justfile commands
 
-If you have [just](https://github.com/casey/just) installed, OpKit's `justfile` covers the full
+If you have [just](https://github.com/casey/just) installed, op-index's `justfile` covers the full
 development lifecycle:
 
 ```bash
@@ -184,7 +184,7 @@ Recommended environment variable conventions for your `src/main.ts`:
 
 ```ts
 const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '/data/opstream.db';
-const OPKIT_DB    = process.env['OPKIT_DB_PATH']    ?? '/data/opkit.db';
+const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? '/data/opindex.db';
 const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? '941400');
 const PORT        = Number(process.env['PORT']        ?? '4000');
 ```
@@ -192,9 +192,9 @@ const PORT        = Number(process.env['PORT']        ?? '4000');
 ## Production checklist
 
 - **Separate source and sink databases** — OpStream writes to `opstream.db` continuously;
-  keeping `opkit.db` separate prevents write contention.
+  keeping `opindex.db` separate prevents write contention.
 - **Run behind a reverse proxy** — nginx, Caddy, or Cloudflare in front of port 4000 gives you
-  TLS, rate limiting, and origin-restricted CORS without changing OpKit's configuration.
+  TLS, rate limiting, and origin-restricted CORS without changing op-index's configuration.
 - **Mount volumes on fast storage** — SQLite is extremely fast on SSDs; avoid network-attached
   storage for the database files.
 - **Handle `SIGTERM` cleanly** — call `stop()` on your subscribe handle and the GraphQL server
@@ -211,7 +211,7 @@ process.on('SIGTERM', async () => {
 ## Development without Docker
 
 ```bash
-cd OpKit
+cd op-index
 npm install
 npm test              # run all 155 tests
 npm run test:watch    # watch mode

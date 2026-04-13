@@ -1,9 +1,9 @@
 # Handlers
 
-Handlers are the heart of your indexer. They are async functions that OpKit calls whenever a
+Handlers are the heart of your indexer. They are async functions that op-index calls whenever a
 matching on-chain event passes through the pipeline — whether from a historical backfill or a
 live subscription. Your handler reads the decoded event, writes to the store, and returns.
-OpKit handles the rest.
+op-index handles the rest.
 
 ## Event handlers — `indexer.on`
 
@@ -126,7 +126,7 @@ The second argument to every event handler:
 
 ```ts
 interface HandlerContext {
-  store:          EntityStore;   // read/write your opkit_* tables
+  store:          EntityStore;   // read/write your opindex_* tables
   block:          number;        // same as event.blockNumber
   blockTimestamp: number | undefined;
 }
@@ -156,7 +156,7 @@ interface BlockContext {
 For WebSocket push sources or testing, bypass the EventSource entirely:
 
 ```ts
-// Raw bytes — OpKit decodes them first
+// Raw bytes — op-index decodes them first
 await indexer.processRawEvent('Transferred', rawBytes, {
   blockNumber:     50,
   txHash:          '0xtx',

@@ -1,10 +1,10 @@
 /**
- * MinimalDbAdapter — the database interface OpKit requires for its sink (write) connection.
+ * MinimalDbAdapter — the database interface op-index requires for its sink (write) connection.
  *
  * Structurally identical to @opnet-devs/opstream's DbAdapter. Pass the OpStream
  * adapter directly and TypeScript accepts it via structural typing — no import needed.
  *
- * OpKit also ships its own SqliteAdapter backed by better-sqlite3 for standalone
+ * op-index also ships its own SqliteAdapter backed by better-sqlite3 for standalone
  * use and unit tests without OpStream.
  */
 

@@ -1,6 +1,6 @@
 # Decoders
 
-OPNET emits events as raw big-endian binary data. OpKit ships built-in decoders for the most
+OPNET emits events as raw big-endian binary data. op-index ships built-in decoders for the most
 common OPNET protocol events, and lets you register your own for custom contracts.
 
 When a decoder is registered for an event name, `event.decoded` in your handler will be a
@@ -36,7 +36,7 @@ Address fields (`from`, `to`, `sender`, etc.) are returned as lowercase hex stri
 ## Registering a custom decoder
 
 ```ts
-import { registerDecoder } from '@opnet-devs/opkit';
+import { registerDecoder } from '@opnet-devs/op-index';
 
 registerDecoder('MyCustomEvent', (rawBytes: Uint8Array) => {
   if (rawBytes.length < 64) return null; // guard against malformed data
@@ -56,7 +56,7 @@ registerDecoder('MyCustomEvent', (rawBytes: Uint8Array) => {
 });
 ```
 
-Return `null` if the bytes are malformed or too short — OpKit will set `event.decoded = null`
+Return `null` if the bytes are malformed or too short — op-index will set `event.decoded = null`
 and continue processing.
 
 `registerDecoder` is global and takes effect immediately. Call it once at startup, before
@@ -65,7 +65,7 @@ and continue processing.
 ## Reading the decoder registry
 
 ```ts
-import { DECODER_REGISTRY } from '@opnet-devs/opkit';
+import { DECODER_REGISTRY } from '@opnet-devs/op-index';
 
 // Map<eventName, decoder function>
 console.log([...DECODER_REGISTRY.keys()]);
