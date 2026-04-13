@@ -24,10 +24,10 @@ Opnet-devs/
 
 ## Scaffold a new indexer
 
-The fastest way to start is `npx @opnet-devs/op-index init`:
+The fastest way to start is `npx @opnet-collective/op-index init`:
 
 ```bash
-npx @opnet-devs/op-index init my-indexer
+npx @opnet-collective/op-index init my-indexer
 # Creates my-indexer/ in the current directory with:
 #   package.json, tsconfig.json, .gitignore, .env.example
 #   src/main.ts, src/handlers/transfers.ts
@@ -110,7 +110,7 @@ op-index's `docker-compose.yml` wires OpStream and your indexer together on a sh
 ```yaml
 services:
   opstream:
-    image: ghcr.io/opnet-devs/opstream:latest
+    image: ghcr.io/opnet-collective/opstream:latest
     volumes:
       - chain_data:/data
     environment:

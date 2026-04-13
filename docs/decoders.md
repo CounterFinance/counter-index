@@ -36,7 +36,7 @@ Address fields (`from`, `to`, `sender`, etc.) are returned as lowercase hex stri
 ## Registering a custom decoder
 
 ```ts
-import { registerDecoder } from '@opnet-devs/op-index';
+import { registerDecoder } from '@opnet-collective/op-index';
 
 registerDecoder('MyCustomEvent', (rawBytes: Uint8Array) => {
   if (rawBytes.length < 64) return null; // guard against malformed data
@@ -65,7 +65,7 @@ and continue processing.
 ## Reading the decoder registry
 
 ```ts
-import { DECODER_REGISTRY } from '@opnet-devs/op-index';
+import { DECODER_REGISTRY } from '@opnet-collective/op-index';
 
 // Map<eventName, decoder function>
 console.log([...DECODER_REGISTRY.keys()]);

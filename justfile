@@ -49,7 +49,7 @@ scaffold name="my-indexer":
     "typecheck": "npx tsc --noEmit"
   },
   "dependencies": {
-    "@opnet-devs/op-index": "file:../op-index"
+    "@opnet-collective/op-index": "file:../op-index"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -110,7 +110,7 @@ ENVEX
  * This file shows the pattern. Replace or extend with your own logic.
  */
 
-import type { DecodedEvent, HandlerContext } from '@opnet-devs/op-index';
+import type { DecodedEvent, HandlerContext } from '@opnet-collective/op-index';
 
 export async function onTransferred(event: DecodedEvent, ctx: HandlerContext): Promise<void> {
   if (!event.decoded) return;
@@ -170,7 +170,7 @@ import {
   createIndexer,
   DbEventSource,
   openSqlite,
-} from '@opnet-devs/op-index';
+} from '@opnet-collective/op-index';
 
 import { onTransferred } from './handlers/transfers.js';
 

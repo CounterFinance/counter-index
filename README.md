@@ -20,13 +20,13 @@ OpStream DB ──→ DbEventSource ──→ op-index handlers ──→ opinde
 ## Install
 
 ```bash
-npm install @opnet-devs/op-index
+npm install @opnet-collective/op-index
 ```
 
 ## Minimal example
 
 ```ts
-import { defineSchema, createIndexer, DbEventSource, openSqlite } from '@opnet-devs/op-index';
+import { defineSchema, createIndexer, DbEventSource, openSqlite } from '@opnet-collective/op-index';
 
 const schema = defineSchema({
   Transfer: {
@@ -80,7 +80,7 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 - [x] Block handlers — `indexer.onBlock(handler)`
 - [x] GraphQL API — auto-generated schema, cursor pagination, GraphiQL playground
 - [x] GraphQL subscriptions — `serve({ subscriptions: true })` via `graphql-ws`
-- [x] CLI scaffolding — `npx @opnet-devs/op-index init`
+- [x] CLI scaffolding — `npx @opnet-collective/op-index init`
 - [ ] Reorg handling — rollback `opindex_*` state on chain reorgs
 
 ## License

@@ -51,7 +51,6 @@ function makePayload(overrides: Partial<{
   txHash:          string;
   contractAddress: string;
   eventName:       string;
-  decodedJson:     string | null;
   logIndex:        number;
   blockTimestamp:  number;
   txIndex:         number;
@@ -68,7 +67,6 @@ function makePayload(overrides: Partial<{
     txHash:          '0xabc',
     contractAddress: '0xcontract',
     eventName:       'TestEvent',
-    decodedJson:     null,
     logIndex:        0,
     blockTimestamp:  1_700_000_000,
     txIndex:         0,
@@ -175,9 +173,9 @@ describe('WsEventSource', () => {
     expect(Array.from(captured!)).toEqual([0x01, 0x02, 0xff]);
   });
 
-  // ── subscribe() — OpKit decoder takes priority ───────────────────────────
+  // ── subscribe() — op-index decoder takes priority ───────────────────────────
 
-  it('uses OpKit registered decoder when available', async () => {
+  it('uses op-index registered decoder when available', async () => {
     // Register a decoder for 'PriorityEvent' that returns a known result
     const originalSize = DECODER_REGISTRY.size;
     registerDecoder('PriorityEvent', () => ({ custom: 'decoded' }));
@@ -188,36 +186,30 @@ describe('WsEventSource', () => {
     const stop = source.subscribe(1, async (e) => { captured = e.decoded; });
 
     await new Promise((r) => setTimeout(r, 30));
-    srv.broadcast(makePayload({
-      eventName:   'PriorityEvent',
-      decodedJson: JSON.stringify({ custom: 'from_opstream' }),
-    }));
+    srv.broadcast(makePayload({ eventName: 'PriorityEvent' }));
     await new Promise((r) => setTimeout(r, 30));
 
     stop();
     DECODER_REGISTRY.delete('PriorityEvent');
     expect(DECODER_REGISTRY.size).toBe(originalSize);
 
-    expect(captured).toEqual({ custom: 'decoded' }); // OpKit decoder wins
+    expect(captured).toEqual({ custom: 'decoded' });
   });
 
-  // ── subscribe() — decodedJson fallback ───────────────────────────────────
+  // ── subscribe() — unknown event names produce null decoded ───────────────
 
-  it('falls back to decodedJson when no OpKit decoder is registered', async () => {
+  it('returns null decoded when no op-index decoder is registered', async () => {
     const source = new WsEventSource(url);
     let captured: Record<string, unknown> | null | undefined;
 
     const stop = source.subscribe(1, async (e) => { captured = e.decoded; });
 
     await new Promise((r) => setTimeout(r, 30));
-    srv.broadcast(makePayload({
-      eventName:   'UnknownEventXYZ',
-      decodedJson: JSON.stringify({ foo: 'bar' }),
-    }));
+    srv.broadcast(makePayload({ eventName: 'UnknownEventXYZ' }));
     await new Promise((r) => setTimeout(r, 30));
 
     stop();
-    expect(captured).toEqual({ foo: 'bar' });
+    expect(captured).toBeNull();
   });
 
   // ── subscribe() — gasUsed / burnedBitcoin to BigInt ──────────────────────

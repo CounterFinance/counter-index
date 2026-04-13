@@ -9,7 +9,7 @@ Everything starts with `defineSchema`. Declare the entities you want to index �
 one SQL table per entity in your sink database, prefixed `opindex_` to avoid collisions.
 
 ```ts
-import { defineSchema } from '@opnet-devs/op-index';
+import { defineSchema } from '@opnet-collective/op-index';
 
 const schema = defineSchema({
   Account: {
@@ -36,7 +36,7 @@ See [Schema](./schema.md) for all field types and options.
 **Sink** — where op-index writes your derived `opindex_*` tables.
 
 ```ts
-import { DbEventSource, openSqlite } from '@opnet-devs/op-index';
+import { DbEventSource, openSqlite } from '@opnet-collective/op-index';
 
 // Fast path — OpStream-ready database (recommended for production)
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
@@ -46,7 +46,7 @@ const sink   = openSqlite('/data/opindex.db');
 No OpStream? Use the RPC source instead:
 
 ```ts
-import { RpcEventSource } from '@opnet-devs/op-index';
+import { RpcEventSource } from '@opnet-collective/op-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = new RpcEventSource(
@@ -58,7 +58,7 @@ const source = new RpcEventSource(
 Or let op-index probe and decide automatically:
 
 ```ts
-import { createEventSource } from '@opnet-devs/op-index';
+import { createEventSource } from '@opnet-collective/op-index';
 
 const source = await createEventSource({
   db:  '/data/opstream.db',                              // fast if present
@@ -74,7 +74,7 @@ See [Sources](./sources.md) for Postgres, custom adapters, and the full options 
 and is a no-op on subsequent runs.
 
 ```ts
-import { createIndexer } from '@opnet-devs/op-index';
+import { createIndexer } from '@opnet-collective/op-index';
 
 const indexer = await createIndexer({ schema, sink, source });
 ```
@@ -228,7 +228,7 @@ See [Store](./store.md) for the full API.
 import {
   defineSchema, createIndexer,
   DbEventSource, openSqlite,
-} from '@opnet-devs/op-index';
+} from '@opnet-collective/op-index';
 
 const schema = defineSchema({
   Account: {

@@ -38,7 +38,6 @@ const OPSTREAM_SCHEMA = `
     event_name       TEXT NOT NULL,
     log_index        INTEGER NOT NULL DEFAULT 0,
     event_raw        BLOB NOT NULL,
-    decoded_json     TEXT,
     data_length      INTEGER NOT NULL
   );
 `;
@@ -63,14 +62,14 @@ function makeSourceAdapter() {
 
   // Seed events (raw = empty blob for simplicity)
   const emptyBlob = new Uint8Array(0);
-  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, decoded_json, data_length) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(100, '0xtx1', '0xtoken1', 'Transferred', 0, emptyBlob, JSON.stringify({ from: '0xalice', to: '0xbob', value: '1000' }), 0);
-  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, decoded_json, data_length) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(101, '0xtx2', '0xtoken1', 'Transferred', 0, emptyBlob, JSON.stringify({ from: '0xbob', to: '0xcharlie', value: '500' }), 0);
-  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, decoded_json, data_length) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(101, '0xtx2', '0xtoken1', 'Approval', 1, emptyBlob, JSON.stringify({ owner: '0xbob', spender: '0xdex', value: '9999' }), 0);
-  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, decoded_json, data_length) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(101, '0xtx3', '0xtoken2', 'Transferred', 0, emptyBlob, null, 0);
+  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(100, '0xtx1', '0xtoken1', 'Transferred', 0, emptyBlob, 0);
+  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(101, '0xtx2', '0xtoken1', 'Transferred', 0, emptyBlob, 0);
+  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(101, '0xtx2', '0xtoken1', 'Approval', 1, emptyBlob, 0);
+  db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(101, '0xtx3', '0xtoken2', 'Transferred', 0, emptyBlob, 0);
 
   return new SqliteAdapter(db);
 }
@@ -136,9 +135,4 @@ describe('DbEventSource.query', () => {
     expect(events[0]!.revertReason).toBe('insufficient balance');
   });
 
-  it('uses pre-stored decoded_json when available', async () => {
-    const events = await source.query(100, 100);
-    expect(events[0]!.decoded).not.toBeNull();
-    expect(events[0]!.decoded!['value']).toBe('1000');
-  });
 });

@@ -7,7 +7,7 @@ API. No SDL, no migration files, no codegen step.
 ## defineSchema
 
 ```ts
-import { defineSchema } from '@opnet-devs/op-index';
+import { defineSchema } from '@opnet-collective/op-index';
 
 const schema = defineSchema({
   Pool: {

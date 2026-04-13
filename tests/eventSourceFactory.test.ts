@@ -18,7 +18,7 @@ import { createEventSource, probeOpStreamSchema } from '../src/eventSourceFactor
 const OPSTREAM_SCHEMA = `
   CREATE TABLE IF NOT EXISTS blocks      (block_number INTEGER PRIMARY KEY, block_hash TEXT NOT NULL, timestamp INTEGER, tx_count INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS transactions(tx_hash TEXT NOT NULL PRIMARY KEY, block_number INTEGER NOT NULL, tx_index INTEGER NOT NULL, tx_type TEXT NOT NULL DEFAULT 'interaction', from_address TEXT, contract_address TEXT, gas_used TEXT, burned_bitcoin TEXT, failed INTEGER NOT NULL DEFAULT 0, revert_reason TEXT);
-  CREATE TABLE IF NOT EXISTS events      (id INTEGER PRIMARY KEY AUTOINCREMENT, block_number INTEGER NOT NULL, tx_hash TEXT NOT NULL, contract_address TEXT NOT NULL, event_name TEXT NOT NULL, log_index INTEGER NOT NULL DEFAULT 0, event_raw BLOB NOT NULL, decoded_json TEXT, data_length INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS events      (id INTEGER PRIMARY KEY AUTOINCREMENT, block_number INTEGER NOT NULL, tx_hash TEXT NOT NULL, contract_address TEXT NOT NULL, event_name TEXT NOT NULL, log_index INTEGER NOT NULL DEFAULT 0, event_raw BLOB NOT NULL, data_length INTEGER NOT NULL);
 `;
 
 function makeOpStreamAdapter(): SqliteAdapter {

@@ -1,5 +1,5 @@
 /**
- * EventSource — abstraction over where OpKit reads raw chain events from.
+ * EventSource — abstraction over where op-index reads raw chain events from.
  *
  * Two implementations:
  *   DbEventSource   — direct SQL against OpStream's events/transactions/blocks tables.
@@ -9,7 +9,7 @@
  *   RpcEventSource  — future: WebSocket/HTTP against OpStream's RPC endpoint.
  *                     Swap at config time — handlers and store are unaffected.
  *
- * The source is READ-ONLY. OpKit never writes to OpStream's tables through this interface.
+ * The source is READ-ONLY. op-index never writes to OpStream's tables through this interface.
  */
 
 import type { MinimalDbAdapter } from './adapter.js';
@@ -64,7 +64,6 @@ interface EventJoinRow {
   event_name: string;
   log_index: number;
   event_raw: Buffer | Uint8Array;
-  decoded_json: string | null;
   data_length: number;
   // from transactions JOIN
   from_address: string | null;
@@ -95,7 +94,6 @@ const QUERY_SQL = `
     e.event_name,
     e.log_index,
     e.event_raw,
-    e.decoded_json,
     e.data_length,
     t.from_address,
     t.gas_used,
@@ -137,14 +135,10 @@ function rowToEvent(row: EventJoinRow): DecodedEvent {
     ? row.event_raw
     : new Uint8Array(row.event_raw);
 
-  // Use pre-stored decoded_json if available, otherwise try to decode now
-  let decoded: Record<string, unknown> | null = null;
-  if (row.decoded_json) {
-    try { decoded = JSON.parse(row.decoded_json) as Record<string, unknown>; } catch { /* ignore */ }
-  }
-  if (!decoded) {
-    decoded = decodeEvent(row.event_name, rawData);
-  }
+  // OpStream stores raw bytes only — decoding happens here, at read time,
+  // via op-index's DECODER_REGISTRY. Adding a new decoder instantly applies to
+  // all historical events without any rewrite of the OpStream archive.
+  const decoded = decodeEvent(row.event_name, rawData);
 
   return {
     blockNumber:    row.block_number,
