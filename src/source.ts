@@ -69,7 +69,7 @@ interface EventJoinRow {
   from_address: string | null;
   gas_used: string | null;
   burned_bitcoin: string | null;
-  failed: number | null;   // SQLite stores boolean as 0/1
+  failed: number | boolean | null;  // SQLite: 0/1 integer; Postgres: native boolean
   revert_reason: string | null;
   tx_index: number | null;
   // from blocks JOIN
@@ -80,12 +80,7 @@ interface EventJoinRow {
 // DbEventSource — reads from an OpStream-ready database
 // ---------------------------------------------------------------------------
 
-/**
- * The JOIN query enriches each event with transaction context (from_address,
- * gas_used, etc.) and block timestamp in a single round-trip. This is the
- * advantage of sharing the same DB as OpStream — no extra RPC calls needed.
- */
-const QUERY_SQL = `
+const QUERY_BASE = `
   SELECT
     e.id,
     e.block_number,
@@ -105,23 +100,30 @@ const QUERY_SQL = `
   FROM events e
   LEFT JOIN transactions t ON t.tx_hash = e.tx_hash
   LEFT JOIN blocks b ON b.block_number = e.block_number
-  WHERE e.block_number BETWEEN ? AND ?
 `;
 
+/**
+ * Build the event query with dialect-appropriate parameter placeholders.
+ * SQLite uses positional `?`; Postgres uses `$N` (1-based).
+ */
 function buildQuery(
   fromBlock: number,
   toBlock: number,
+  dialect: 'sqlite' | 'postgres',
   filters?: EventSourceFilters,
 ): { sql: string; params: unknown[] } {
-  let sql = QUERY_SQL;
+  const p = (n: number): string => dialect === 'postgres' ? `$${n}` : '?';
+  let sql = QUERY_BASE;
   const params: unknown[] = [fromBlock, toBlock];
 
+  sql += ` WHERE e.block_number BETWEEN ${p(1)} AND ${p(2)}`;
+
   if (filters?.contract) {
-    sql += ' AND e.contract_address = ?';
     params.push(filters.contract);
+    sql += ` AND e.contract_address = ${p(params.length)}`;
   }
   if (filters?.eventNames && filters.eventNames.length > 0) {
-    const placeholders = filters.eventNames.map(() => '?').join(', ');
+    const placeholders = filters.eventNames.map((_, i) => p(params.length + i + 1)).join(', ');
     sql += ` AND e.event_name IN (${placeholders})`;
     params.push(...filters.eventNames);
   }
@@ -154,7 +156,8 @@ function rowToEvent(row: EventJoinRow): DecodedEvent {
     fromAddress:    row.from_address ?? undefined,
     gasUsed:        row.gas_used != null ? BigInt(row.gas_used) : undefined,
     burnedBitcoin:  row.burned_bitcoin != null ? BigInt(row.burned_bitcoin) : undefined,
-    failed:         row.failed != null ? row.failed !== 0 : undefined,
+    // SQLite stores failed as 0/1 (integer); Postgres returns native boolean.
+    failed:         row.failed != null ? (row.failed !== 0 && row.failed !== false) : undefined,
     revertReason:   row.revert_reason ?? undefined,
   };
 }
@@ -170,7 +173,7 @@ export class DbEventSource implements EventSource {
     toBlock: number,
     filters?: EventSourceFilters,
   ): Promise<DecodedEvent[]> {
-    const { sql, params } = buildQuery(fromBlock, toBlock, filters);
+    const { sql, params } = buildQuery(fromBlock, toBlock, this.db.dialect, filters);
     const rows = await this.db.all<EventJoinRow>(sql, params);
     return rows.map(rowToEvent);
   }

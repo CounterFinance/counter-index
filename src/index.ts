@@ -19,6 +19,8 @@ export {
   SqliteAdapter,
   openSqlite,
   createTestAdapter,
+  PostgresAdapter,
+  openPostgres,
 } from './adapter.js';
 
 // --- Event source ----------------------------------------------------------

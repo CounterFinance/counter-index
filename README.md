@@ -14,7 +14,7 @@ OpStream DB ──→ DbEventSource ──→ op-index handlers ──→ opinde
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 24
 - An OpStream-ready database **or** any OPNET RPC node as the event source
 
 ## Install

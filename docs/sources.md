@@ -33,17 +33,22 @@ const source = new DbEventSource(openSqlite('/data/opstream.db'));
 
 ### With Postgres
 
-op-index's `MinimalDbAdapter` interface is structurally identical to OpStream's `DbAdapter`. Pass
-OpStream's Postgres adapter directly:
+op-index ships its own `PostgresAdapter` backed by the `postgres` npm package. Use `openPostgres()`
+for both the source (reading from an OpStream Postgres DB) and the sink:
 
 ```ts
-import { DbEventSource } from '@opnet-collective/op-index';
-import { openPostgresDb } from '@opnet-collective/opstream'; // OpStream's Postgres adapter
+import { DbEventSource, openPostgres, createIndexer } from '@opnet-collective/op-index';
 
-const source = new DbEventSource(await openPostgresDb(process.env.OPSTREAM_DB_URL!));
-const sink   = await openPostgresDb(process.env.OPINDEX_DB_URL!);
+const source = new DbEventSource(await openPostgres(process.env.OPSTREAM_DB_URL!));
+const sink   = await openPostgres(process.env.OPINDEX_DB_URL!);
 
 const indexer = await createIndexer({ schema, sink, source });
+
+// On graceful shutdown — drain the connection pool
+process.on('SIGTERM', async () => {
+  await source.adapter.end?.();
+  await sink.end();
+});
 ```
 
 Source and sink can be the same Postgres instance — op-index's `opindex_` table prefix prevents
@@ -202,7 +207,7 @@ You can also pass a pre-opened adapter instead of a file path:
 
 ```ts
 const source = await createEventSource({
-  db:  await openPostgresDb(process.env.OPSTREAM_DB_URL!),
+  db:  await openPostgres(process.env.OPSTREAM_DB_URL!),
   rpc: new JSONRpcProvider('https://mainnet.opnet.org'),
 });
 ```
@@ -256,8 +261,8 @@ import { openSqlite } from '@opnet-collective/op-index';
 // SQLite
 const sink = openSqlite('/data/opindex.db');
 
-// Postgres (via OpStream's adapter)
-const sink = await openPostgresDb(process.env.OPINDEX_DB_URL!);
+// Postgres
+const sink = await openPostgres(process.env.OPINDEX_DB_URL!);
 ```
 
 Pass the sink to `createIndexer`:

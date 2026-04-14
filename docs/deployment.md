@@ -9,16 +9,16 @@ with Docker and docker-compose.
 The recommended layout for a project built on op-index:
 
 ```
-Opnet-devs/
+opnet-collective/
   op-index/               ← op-index library (this repo)
-  MyIndexer/              ← your indexer app
+  my-indexer/             ← your indexer app
     src/
       main.ts             ← entry point (~50 lines)
       handlers/
         transfers.ts      ← your event handlers
-    Dockerfile            ← copy of op-index/Dockerfile, customised
-    docker-compose.yml    ← wires OpStream + your indexer together
-    package.json          ← depends on file:../op-index
+    Dockerfile
+    docker-compose.yml
+    package.json          ← "@opnet-collective/op-index": "^0.1.0"
     tsconfig.json
 ```
 
@@ -35,7 +35,7 @@ npx @opnet-collective/op-index init my-indexer
 cd my-indexer && npm install && npm run dev
 ```
 
-No monorepo required — works anywhere Node ≥ 22 and npx are available.
+No monorepo required — works anywhere Node ≥ 24 and npx are available.
 
 If you are working inside the op-index monorepo, the `just scaffold` command does the same thing:
 
@@ -47,46 +47,36 @@ just scaffold my-indexer
 
 ## Dockerfile
 
-op-index ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript; stage 2 runs
-only the compiled output — no TypeScript compiler in production.
+op-index ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript and builds native
+modules; stage 2 runs only the compiled output — no build tools or TypeScript compiler in
+production.
 
-Copy it to your indexer and update the four `STEP` comments:
+Copy it to your indexer root (no modifications needed for a standard layout):
 
 ```dockerfile
-# Build context: Opnet-devs/ parent directory
-# docker build -f MyIndexer/Dockerfile -t my-indexer .
-
 # ── Stage 1: build ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:24-slim AS builder
 WORKDIR /build
 
-# STEP 1 — copy op-index source (file: dependency)
-COPY op-index/package*.json /op-index/
-COPY op-index/src           /op-index/src/
-COPY op-index/tsconfig.json /op-index/
-
-# STEP 2 — replace "MyIndexer" with your project name
-COPY MyIndexer/package*.json ./
-RUN npm install
-COPY MyIndexer/src        ./src/
-COPY MyIndexer/tsconfig.json ./
+COPY package*.json ./
+RUN npm ci
+COPY src        ./src/
+COPY tsconfig.json ./
 RUN npm run build          # compiles src/ → dist/
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
-FROM node:22-alpine
-RUN apk add --no-cache dumb-init
+FROM node:24-slim
+RUN apt-get update && apt-get install -y --no-install-recommends dumb-init && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY --from=builder /build/package*.json ./
-RUN npm install --omit=dev
-COPY --from=builder /build/dist  ./dist
-COPY --from=builder /op-index/src   /op-index/src/
-COPY --from=builder /op-index/package.json /op-index/
+RUN npm ci --omit=dev
+COPY --from=builder /build/dist ./dist
 
 RUN mkdir -p /app/data && \
-    addgroup -g 1001 -S indexer && \
-    adduser  -u 1001 -S indexer -G indexer && \
-    chown -R indexer:indexer /app /op-index
+    groupadd -r indexer && \
+    useradd -r -g indexer indexer && \
+    chown -R indexer:indexer /app
 USER indexer
 
 ENTRYPOINT ["dumb-init", "--"]
@@ -118,8 +108,8 @@ services:
 
   op-index-indexer:
     build:
-      context: ..
-      dockerfile: MyIndexer/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     volumes:
       - chain_data:/data
     environment:
@@ -213,7 +203,7 @@ process.on('SIGTERM', async () => {
 ```bash
 cd op-index
 npm install
-npm test              # run all 155 tests
+npm test              # run all tests
 npm run test:watch    # watch mode
 npx tsc --noEmit      # type-check only
 ```
