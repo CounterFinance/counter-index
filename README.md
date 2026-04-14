@@ -1,11 +1,11 @@
 # op-index
 
-Indexer framework for [OPNET](https://opnet.org) (Bitcoin L2). Define a schema, handle chain
+Indexer framework for [OPNET](https://opnet.org) (Bitcoin L1). Define a schema, handle chain
 events, persist derived state to SQLite or Postgres, and serve it over a GraphQL API with
 cursor pagination and live subscriptions — all auto-generated from your schema, zero codegen.
 
 ```
-OpStream DB ──→ DbEventSource ──→ op-index handlers ──→ opindex_* tables
+Local DB ──→ DbEventSource ──→ op-index handlers ──→ opindex_* tables
   (or OPNET RPC)                                              ↓
                                                       indexer.serve()
                                                               ↓
