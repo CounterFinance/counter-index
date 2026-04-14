@@ -1,10 +1,10 @@
 # Sources
 
-An EventSource is what OpKit reads raw chain events from. It is completely decoupled from the
-sink (where OpKit writes your indexed tables) — they can be different databases, different
+An EventSource is what op-index reads raw chain events from. It is completely decoupled from the
+sink (where op-index writes your indexed tables) — they can be different databases, different
 servers, or different technologies entirely.
 
-OpKit ships two source implementations and a smart factory that picks the best one available.
+op-index ships two source implementations and a smart factory that picks the best one available.
 
 ## Comparison
 
@@ -20,33 +20,38 @@ OpKit ships two source implementations and a smart factory that picks the best o
 
 ## DbEventSource
 
-Reads from an [OpStream](https://github.com/opnet-devs/opstream)-ready database. OpStream
+Reads from an [OpStream](https://github.com/opnet-collective/opstream)-ready database. OpStream
 pre-indexes all OPNET blocks, transactions, and events into a structured schema — `DbEventSource`
 queries that schema with a single SQL statement per `sync()` call, making historical backfills
 essentially instantaneous.
 
 ```ts
-import { DbEventSource, openSqlite } from '@opnet-devs/opkit';
+import { DbEventSource, openSqlite } from '@opnet-collective/op-index';
 
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
 ```
 
 ### With Postgres
 
-OpKit's `MinimalDbAdapter` interface is structurally identical to OpStream's `DbAdapter`. Pass
-OpStream's Postgres adapter directly:
+op-index ships its own `PostgresAdapter` backed by the `postgres` npm package. Use `openPostgres()`
+for both the source (reading from an OpStream Postgres DB) and the sink:
 
 ```ts
-import { DbEventSource } from '@opnet-devs/opkit';
-import { openPostgresDb } from '@opnet-devs/opstream'; // OpStream's Postgres adapter
+import { DbEventSource, openPostgres, createIndexer } from '@opnet-collective/op-index';
 
-const source = new DbEventSource(await openPostgresDb(process.env.OPSTREAM_DB_URL!));
-const sink   = await openPostgresDb(process.env.OPKIT_DB_URL!);
+const source = new DbEventSource(await openPostgres(process.env.OPSTREAM_DB_URL!));
+const sink   = await openPostgres(process.env.OPINDEX_DB_URL!);
 
 const indexer = await createIndexer({ schema, sink, source });
+
+// On graceful shutdown — drain the connection pool
+process.on('SIGTERM', async () => {
+  await source.adapter.end?.();
+  await sink.end();
+});
 ```
 
-Source and sink can be the same Postgres instance — OpKit's `opkit_` table prefix prevents
+Source and sink can be the same Postgres instance — op-index's `opindex_` table prefix prevents
 collisions with OpStream's raw tables.
 
 ---
@@ -57,7 +62,7 @@ Connects to OpStream's WebSocket broadcast server. Events arrive fully enriched 
 populated — with sub-second latency. No DB reads, no RPC calls.
 
 ```ts
-import { WsEventSource } from '@opnet-devs/opkit';
+import { WsEventSource } from '@opnet-collective/op-index';
 
 const source = new WsEventSource('ws://localhost:8080');
 ```
@@ -75,7 +80,7 @@ For full-history indexers, pair it with `DbEventSource` for backfill and switch 
 for live subscriptions (wire them separately in your `main.ts`):
 
 ```ts
-import { DbEventSource, WsEventSource, openSqlite } from '@opnet-devs/opkit';
+import { DbEventSource, WsEventSource, openSqlite } from '@opnet-collective/op-index';
 
 // Backfill via SQL — instant
 const dbSource = new DbEventSource(openSqlite('/data/opstream.db'));
@@ -98,12 +103,13 @@ interface WsEventSourceOptions {
 Reconnection uses exponential backoff: delay doubles on each failure up to `maxReconnectDelayMs`,
 then resets to `reconnectDelayMs` on a successful open.
 
-### Decoder priority
+### Decoding
 
-When an event arrives, OpKit tries its registered decoders first (from the raw `eventRaw` bytes).
-If no decoder is registered for the event name, it falls back to OpStream's `decodedJson` field.
-This keeps OpKit's decoder registry as the source of truth — register a custom decoder with
-`registerDecoder()` and it will always win over OpStream's version.
+OpStream stores and broadcasts raw event bytes only — there is no `decoded_json` column or
+field. Decoding lives entirely in op-index's `DECODER_REGISTRY` and is applied at read time on
+the raw `eventRaw` bytes. Register a decoder with `registerDecoder()` and it instantly
+applies to every subsequent event (and, for `DbEventSource`, every historical event in
+the archive — no rewrite needed).
 
 ### No server-side filtering
 
@@ -131,7 +137,7 @@ Talks directly to any OPNET RPC node. No OpStream installation required — poin
 endpoint and you're indexing immediately.
 
 ```ts
-import { RpcEventSource } from '@opnet-devs/opkit';
+import { RpcEventSource } from '@opnet-collective/op-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = new RpcEventSource(
@@ -140,7 +146,7 @@ const source = new RpcEventSource(
 );
 ```
 
-OpKit does not import from the `opnet` SDK directly. Instead it defines a minimal `BlockProvider`
+op-index does not import from the `opnet` SDK directly. Instead it defines a minimal `BlockProvider`
 interface that `JSONRpcProvider` satisfies via TypeScript structural typing — no version coupling,
 no forced dependency.
 
@@ -186,7 +192,7 @@ Give `createEventSource` whatever you have. It probes for the fastest available 
 back automatically.
 
 ```ts
-import { createEventSource } from '@opnet-devs/opkit';
+import { createEventSource } from '@opnet-collective/op-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = await createEventSource({
@@ -201,7 +207,7 @@ You can also pass a pre-opened adapter instead of a file path:
 
 ```ts
 const source = await createEventSource({
-  db:  await openPostgresDb(process.env.OPSTREAM_DB_URL!),
+  db:  await openPostgres(process.env.OPSTREAM_DB_URL!),
   rpc: new JSONRpcProvider('https://mainnet.opnet.org'),
 });
 ```
@@ -216,7 +222,7 @@ it throws.
 You can call `probeOpStreamSchema` directly if you need to check readiness yourself:
 
 ```ts
-import { probeOpStreamSchema, openSqlite } from '@opnet-devs/opkit';
+import { probeOpStreamSchema, openSqlite } from '@opnet-collective/op-index';
 
 const ready = await probeOpStreamSchema(openSqlite('/data/opstream.db'));
 // → true if OpStream-ready, false otherwise
@@ -247,16 +253,16 @@ with `DbEventSource`, where the filter is pushed into the SQL `WHERE` clause.
 
 ## Sink connections
 
-The sink is where OpKit writes your `opkit_*` tables. Open it independently of the source:
+The sink is where op-index writes your `opindex_*` tables. Open it independently of the source:
 
 ```ts
-import { openSqlite } from '@opnet-devs/opkit';
+import { openSqlite } from '@opnet-collective/op-index';
 
 // SQLite
-const sink = openSqlite('/data/opkit.db');
+const sink = openSqlite('/data/opindex.db');
 
-// Postgres (via OpStream's adapter)
-const sink = await openPostgresDb(process.env.OPKIT_DB_URL!);
+// Postgres
+const sink = await openPostgres(process.env.OPINDEX_DB_URL!);
 ```
 
 Pass the sink to `createIndexer`:
@@ -265,5 +271,5 @@ Pass the sink to `createIndexer`:
 const indexer = await createIndexer({ schema, sink, source });
 ```
 
-OpKit creates its tables on first run and does nothing on subsequent runs — `createIndexer` is
+op-index creates its tables on first run and does nothing on subsequent runs — `createIndexer` is
 safe to call repeatedly against the same sink database.

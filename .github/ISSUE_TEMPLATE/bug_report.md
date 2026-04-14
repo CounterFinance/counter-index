@@ -16,7 +16,7 @@ labels: bug
 
 ## Environment
 
-- OpKit version:
+- op-index version:
 - Node.js version (`node --version`):
 - Event source: DbEventSource / WsEventSource / RpcEventSource
 - OS:

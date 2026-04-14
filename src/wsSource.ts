@@ -28,7 +28,6 @@ interface OpStreamWebhookEvent {
   txHash:          string;
   contractAddress: string;
   eventName:       string;
-  decodedJson:     string | null;
   logIndex:        number;
   blockTimestamp:  number;
   txIndex:         number;
@@ -66,15 +65,10 @@ function hexToUint8Array(hex: string): Uint8Array {
 function toDecodedEvent(raw: OpStreamWebhookEvent): DecodedEvent {
   const eventRaw = hexToUint8Array(raw.eventRaw);
 
-  // Decoder priority: OpKit registered decoders → OpStream's decodedJson fallback
-  let decoded: Record<string, unknown> | null = decodeEvent(raw.eventName, eventRaw);
-  if (decoded === null && raw.decodedJson) {
-    try {
-      decoded = JSON.parse(raw.decodedJson) as Record<string, unknown>;
-    } catch {
-      // malformed JSON — stay null
-    }
-  }
+  // OpStream broadcasts raw event bytes only — decoding lives entirely in op-index's
+  // DECODER_REGISTRY and is applied at read time. Adding a new decoder instantly
+  // applies to subsequent broadcasts with no OpStream change.
+  const decoded = decodeEvent(raw.eventName, eventRaw);
 
   return {
     blockNumber:     raw.blockNumber,
@@ -108,7 +102,7 @@ export class WsEventSource implements EventSource {
 
   query(): Promise<DecodedEvent[]> {
     throw new Error(
-      '[OpKit] WsEventSource is live-only — use DbEventSource for historical backfill.',
+      '[op-index] WsEventSource is live-only — use DbEventSource for historical backfill.',
     );
   }
 

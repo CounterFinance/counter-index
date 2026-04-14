@@ -1,6 +1,6 @@
 # GraphQL API
 
-OpKit auto-generates a complete GraphQL schema from your `defineSchema()` entities. No SDL file
+op-index auto-generates a complete GraphQL schema from your `defineSchema()` entities. No SDL file
 to write, no codegen to run, no resolvers to wire up manually. Call `indexer.serve()` and your
 API is live.
 
@@ -51,7 +51,7 @@ It is served from the unpkg CDN (React 18 + GraphiQL 3) — no extra files, no b
 
 ## Generated queries
 
-For every entity in your schema, OpKit generates two queries.
+For every entity in your schema, op-index generates two queries.
 
 ### Singular — fetch by id
 
@@ -205,7 +205,7 @@ even across pages.
 
 ## BigInt scalar
 
-OPNET deals in 256-bit integers. OpKit exposes them as a custom `BigInt` scalar — serialised as
+OPNET deals in 256-bit integers. op-index exposes them as a custom `BigInt` scalar — serialised as
 decimal strings over the wire so they survive JSON without precision loss.
 
 ```graphql

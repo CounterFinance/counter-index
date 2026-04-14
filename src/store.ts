@@ -1,7 +1,7 @@
 /**
  * Entity store — DB-backed indexed data store.
  *
- * Each entity defined in the schema gets its own `opkit_<entity>` table
+ * Each entity defined in the schema gets its own `opindex_<entity>` table
  * (lowercase). Tables are created automatically when the store is initialised.
  * All operations are async — the underlying adapter may be synchronous SQLite
  * or async Postgres; callers don't need to know which.
@@ -9,7 +9,7 @@
  * BigInt fields are serialised as decimal strings (TEXT) since SQL has no
  * native bigint type. They are deserialised back to BigInt on read.
  *
- * Table prefix `opkit_` prevents collisions with OpStream's raw tables when
+ * Table prefix `opindex_` prevents collisions with OpStream's raw tables when
  * both use the same database.
  */
 
@@ -66,7 +66,7 @@ export interface EntityStore {
 // SQL type mapping
 // ---------------------------------------------------------------------------
 
-const TABLE_PREFIX = 'opkit_';
+const TABLE_PREFIX = 'opindex_';
 
 function fieldTypeSql(type: FieldType, dialect: 'sqlite' | 'postgres'): string {
   switch (type) {
@@ -84,14 +84,35 @@ function tableName(entity: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Dialect helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Single parameter placeholder.
+ * SQLite uses positional `?`; Postgres uses `$N` (1-based).
+ */
+function param(dialect: 'sqlite' | 'postgres', n: number): string {
+  return dialect === 'postgres' ? `$${n}` : '?';
+}
+
+/**
+ * Build an array of consecutive parameter placeholders starting at `start`.
+ */
+function paramList(dialect: 'sqlite' | 'postgres', count: number, start = 1): string[] {
+  if (dialect === 'sqlite') return Array<string>(count).fill('?');
+  return Array.from({ length: count }, (_, i) => `$${start + i}`);
+}
+
+// ---------------------------------------------------------------------------
 // Serialisation helpers
 // ---------------------------------------------------------------------------
 
-function serialise(value: unknown, type: FieldType): unknown {
+function serialise(value: unknown, type: FieldType, dialect: 'sqlite' | 'postgres'): unknown {
   if (value === null || value === undefined) return null;
   switch (type) {
     case 'bigint':  return typeof value === 'bigint' ? value.toString() : String(value);
-    case 'boolean': return value ? 1 : 0;
+    // Postgres has native BOOLEAN; SQLite stores as INTEGER (0/1).
+    case 'boolean': return dialect === 'postgres' ? Boolean(value) : (value ? 1 : 0);
     default:        return value;
   }
 }
@@ -100,6 +121,7 @@ function deserialise(value: unknown, type: FieldType): unknown {
   if (value === null || value === undefined) return undefined;
   switch (type) {
     case 'bigint':  return BigInt(value as string);
+    // Handles SQLite integers (0/1) and Postgres native booleans (true/false).
     case 'boolean': return value !== 0 && value !== false;
     default:        return value;
   }
@@ -127,15 +149,56 @@ function col(name: string): string {
   return `"${name}"`;
 }
 
+/**
+ * NOT NULL default expression for a required (non-optional) column.
+ *
+ * SQLite is loosely typed — `DEFAULT ''` works for all column types.
+ * Postgres enforces type constraints, so each type needs its own default.
+ */
+function notNullDefault(type: FieldType, dialect: 'sqlite' | 'postgres'): string {
+  if (dialect === 'sqlite') return `NOT NULL DEFAULT ''`;
+  switch (type) {
+    case 'string':  return `NOT NULL DEFAULT ''`;
+    case 'int':     return `NOT NULL DEFAULT 0`;
+    case 'float':   return `NOT NULL DEFAULT 0.0`;
+    case 'bigint':  return `NOT NULL DEFAULT '0'`;
+    case 'boolean': return `NOT NULL DEFAULT false`;
+    case 'bytes':   return `NOT NULL DEFAULT ''`;
+  }
+}
+
 function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres'): string {
   const table = tableName(entity);
   const cols = ['"id" TEXT NOT NULL PRIMARY KEY'];
   for (const [field, fieldDef] of Object.entries(def)) {
     const sqlType = fieldTypeSql(fieldDef.type, dialect);
-    const nullable = fieldDef.optional ? '' : ` NOT NULL DEFAULT ''`;
-    cols.push(`${col(field)} ${sqlType}${nullable}`);
+    const constraint = fieldDef.optional ? '' : ` ${notNullDefault(fieldDef.type, dialect)}`;
+    cols.push(`${col(field)} ${sqlType}${constraint}`);
   }
   return `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
+}
+
+/**
+ * Build a dialect-appropriate upsert statement.
+ *
+ * SQLite:   INSERT OR REPLACE INTO t (id, f1, f2) VALUES (?, ?, ?)
+ * Postgres: INSERT INTO t (id, f1, f2) VALUES ($1, $2, $3)
+ *             ON CONFLICT ("id") DO UPDATE SET f1 = EXCLUDED.f1, f2 = EXCLUDED.f2
+ */
+function buildUpsert(
+  table: string,
+  fields: string[],
+  dialect: 'sqlite' | 'postgres',
+): string {
+  const colList = ['"id"', ...fields.map(col)].join(', ');
+  const ph = paramList(dialect, fields.length + 1).join(', ');
+
+  if (dialect === 'sqlite') {
+    return `INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`;
+  }
+
+  const updates = fields.map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
+  return `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ("id") DO UPDATE SET ${updates}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,10 +209,12 @@ export async function createStore(
   schema: Schema<SchemaDefinition>,
   adapter: MinimalDbAdapter,
 ): Promise<EntityStore> {
+  const dialect = adapter.dialect;
+
   // Create all entity tables
   for (const name of schema.entityNames()) {
     const def = schema.getEntity(name);
-    const ddl = buildCreateTable(name, def, adapter.dialect);
+    const ddl = buildCreateTable(name, def, dialect);
     await adapter.exec(ddl);
   }
 
@@ -169,7 +234,7 @@ export async function createStore(
       const def = assertKnown(entity);
       const table = tableName(entity);
       const row = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ?`,
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
         [id],
       );
       if (!row) return undefined;
@@ -180,20 +245,16 @@ export async function createStore(
       const def = assertKnown(entity);
       const table = tableName(entity);
       const fields = Object.keys(def);
-      const cols = ['"id"', ...fields.map(col)].join(', ');
-      const placeholders = ['?', ...fields.map(() => '?')].join(', ');
-      const values = [id, ...fields.map((f) => serialise(data[f], def[f]!.type))];
-      await adapter.run(
-        `INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`,
-        values,
-      );
+      const values = [id, ...fields.map((f) => serialise(data[f], def[f]!.type, dialect))];
+      await adapter.run(buildUpsert(table, fields, dialect), values);
+
       // Notify with the JS-typed record (not the serialised SQL form)
       const record: Record<string, unknown> = { id };
       for (const [f, fieldDef] of Object.entries(def)) {
         record[f] = data[f] !== undefined ? data[f] : null;
         // Normalise so consumers always get typed values (bigint, boolean, etc.)
         if (record[f] !== null && record[f] !== undefined) {
-          record[f] = deserialise(serialise(record[f], fieldDef.type), fieldDef.type);
+          record[f] = deserialise(serialise(record[f], fieldDef.type, dialect), fieldDef.type);
         }
       }
       notify({ entity, id, record, operation: 'set' });
@@ -203,28 +264,30 @@ export async function createStore(
       const def = assertKnown(entity);
       const table = tableName(entity);
       const existing = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ?`,
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
         [id],
       );
       if (!existing) throw new Error(`${entity} with id "${id}" not found`);
 
       const setClauses: string[] = [];
-      const values: unknown[] = [];
+      const setValues: unknown[] = [];
       for (const [field, value] of Object.entries(partial)) {
         if (field in def) {
-          setClauses.push(`${col(field)} = ?`);
-          values.push(serialise(value, def[field]!.type));
+          setValues.push(serialise(value, def[field]!.type, dialect));
+          setClauses.push(`${col(field)} = ${param(dialect, setValues.length)}`);
         }
       }
       if (setClauses.length === 0) return;
-      values.push(id);
+
+      const whereParam = param(dialect, setValues.length + 1);
       await adapter.run(
-        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ?`,
-        values,
+        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ${whereParam}`,
+        [...setValues, id],
       );
+
       // Re-read the full row so the notification has the complete merged record
       const updated = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ?`,
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
         [id],
       );
       notify({ entity, id, record: updated ? deserialiseRow(updated, def) : null, operation: 'update' });
@@ -233,7 +296,10 @@ export async function createStore(
     async delete(entity, id) {
       assertKnown(entity);
       const table = tableName(entity);
-      await adapter.run(`DELETE FROM ${table} WHERE "id" = ?`, [id]);
+      await adapter.run(
+        `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
+        [id],
+      );
       notify({ entity, id, record: null, operation: 'delete' });
     },
 

@@ -1,16 +1,17 @@
 /**
- * MinimalDbAdapter — the database interface OpKit requires for its sink (write) connection.
+ * MinimalDbAdapter — the database interface op-index requires for its sink (write) connection.
  *
- * Structurally identical to @opnet-devs/opstream's DbAdapter. Pass the OpStream
+ * Structurally identical to @opnet-collective/opstream's DbAdapter. Pass the OpStream
  * adapter directly and TypeScript accepts it via structural typing — no import needed.
  *
- * OpKit also ships its own SqliteAdapter backed by better-sqlite3 for standalone
+ * op-index also ships its own SqliteAdapter backed by better-sqlite3 for standalone
  * use and unit tests without OpStream.
  */
 
 import Database from 'better-sqlite3';
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { Sql } from 'postgres';
 
 type DB = ReturnType<typeof Database>;
 
@@ -114,4 +115,74 @@ export function openSqlite(path: string): SqliteAdapter {
  */
 export function createTestAdapter(): SqliteAdapter {
   return new SqliteAdapter(new Database(':memory:'));
+}
+
+// ---------------------------------------------------------------------------
+// PostgresAdapter — postgres (npm)
+// ---------------------------------------------------------------------------
+
+/**
+ * Postgres adapter backed by the `postgres` npm package.
+ *
+ * Accepts an existing `Sql` connection so callers control the pool lifecycle.
+ * Use `openPostgres()` to open a new connection from a URL string.
+ *
+ * The store generates `$N`-style placeholders when `dialect === 'postgres'`,
+ * so all queries are passed through to the driver without transformation.
+ */
+export class PostgresAdapter implements MinimalDbAdapter {
+  readonly dialect = 'postgres' as const;
+
+  constructor(private readonly sql: Sql) {}
+
+  async run(sql: string, params: unknown[] = []): Promise<void> {
+    await this.sql.unsafe(sql, params as never[]);
+  }
+
+  async get<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<T | undefined> {
+    const rows = await this.sql.unsafe(sql, params as never[]);
+    return rows[0] as T | undefined;
+  }
+
+  async all<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<T[]> {
+    const rows = await this.sql.unsafe(sql, params as never[]);
+    return rows as unknown as T[];
+  }
+
+  async exec(sql: string): Promise<void> {
+    await this.sql.unsafe(sql);
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    return this.sql.begin(async () => fn()) as Promise<T>;
+  }
+
+  /** Close the underlying connection pool. Call on graceful shutdown. */
+  async end(): Promise<void> {
+    await this.sql.end();
+  }
+}
+
+/**
+ * Open a Postgres connection and return a `PostgresAdapter`.
+ *
+ * ```ts
+ * const sink = await openPostgres(process.env.DATABASE_URL!);
+ * const indexer = await createIndexer({ schema, sink, source });
+ * // On shutdown:
+ * await sink.end();
+ * ```
+ */
+export async function openPostgres(connectionString: string): Promise<PostgresAdapter> {
+  const { default: postgres } = await import('postgres');
+  const sql = postgres(connectionString, { max: 10 });
+  // Verify the connection is reachable before returning
+  await sql`SELECT 1`;
+  return new PostgresAdapter(sql);
 }

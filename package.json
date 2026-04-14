@@ -1,5 +1,5 @@
 {
-  "name": "@opnet-devs/opkit",
+  "name": "@opnet-collective/op-index",
   "version": "0.1.0",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
   "type": "module",
@@ -7,12 +7,12 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "opkit": "bin/opkit.js"
+    "op-index": "bin/op-index.js"
   },
   "exports": {
     ".": {
       "import": "./dist/src/index.js",
-      "types":  "./dist/src/index.d.ts"
+      "types": "./dist/src/index.d.ts"
     }
   },
   "types": "./dist/src/index.d.ts",
@@ -23,8 +23,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build":      "tsc",
-    "test":       "vitest run",
+    "build": "tsc",
+    "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build && npm test"
   },
@@ -40,7 +40,8 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.0.0",
-    "graphql": "^16.13.2"
+    "graphql": "^16.13.2",
+    "postgres": "^3.4.9"
   },
   "peerDependencies": {
     "graphql-ws": "^5.0.0",

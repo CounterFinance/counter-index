@@ -5,7 +5,7 @@
  * Trade-off: one getBlock() call per block → O(N) for backfill, vs sub-millisecond SQL
  * with DbEventSource. Use for lightweight indexers or when OpStream is not available.
  *
- * OpKit has zero runtime dependencies. This file defines a minimal BlockProvider interface
+ * op-index has zero runtime dependencies. This file defines a minimal BlockProvider interface
  * that the opnet SDK's JSONRpcProvider satisfies via TypeScript structural typing — no import
  * from 'opnet' needed. The caller wires the provider at startup.
  *

@@ -91,14 +91,14 @@ export async function createEventSource(
     // DB exists but is not OpStream-ready
     if (!input.ws && !input.rpc) {
       throw new Error(
-        '[OpKit] createEventSource: the provided database is not OpStream-ready ' +
+        '[op-index] createEventSource: the provided database is not OpStream-ready ' +
         '(missing events / transactions / blocks tables). ' +
         'Either point at an OpStream database or provide a ws URL / rpc fallback.',
       );
     }
 
     console.warn(
-      '[OpKit] createEventSource: database is not OpStream-ready — ' +
+      '[op-index] createEventSource: database is not OpStream-ready — ' +
       `falling back to ${input.ws ? 'WsEventSource' : 'RpcEventSource'}.`,
     );
   }
@@ -114,7 +114,7 @@ export async function createEventSource(
   }
 
   throw new Error(
-    '[OpKit] createEventSource: no valid source provided. ' +
+    '[op-index] createEventSource: no valid source provided. ' +
     'Pass a db path/adapter, a ws URL, an rpc BlockProvider, or a combination.',
   );
 }

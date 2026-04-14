@@ -1,5 +1,5 @@
 /**
- * Core types for the OpKit indexer framework.
+ * Core types for the op-index indexer framework.
  */
 
 // ---------------------------------------------------------------------------

@@ -2,10 +2,10 @@
  * OPNET native token constants.
  *
  * OpStream no longer seeds the tokens table — that responsibility belongs to
- * OpKit. This module exports the canonical metadata for OPNET's built-in tokens
+ * op-index. This module exports the canonical metadata for OPNET's built-in tokens
  * so callers can populate the tokens table on startup.
  *
- * OpKit stays zero-dependency: it exports the data, not the INSERT. The calling
+ * op-index stays zero-dependency: it exports the data, not the INSERT. The calling
  * application owns the database handle and does:
  *
  *   for (const token of OPNET_NATIVE_TOKENS) {

@@ -1,7 +1,7 @@
 /**
  * Indexer — the main orchestrator.
  *
- * Wire up a schema, a sink DB (where OpKit writes derived tables), and optionally
+ * Wire up a schema, a sink DB (where op-index writes derived tables), and optionally
  * a source (where raw chain events are read from). Register event handlers, then
  * run backfill via sync() or go live via subscribe().
  *
@@ -34,7 +34,7 @@ import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type S
 
 export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   schema: Schema<S>;
-  /** Sink DB — OpKit owns its own opkit_* tables here. */
+  /** Sink DB — op-index owns its own opindex_* tables here. */
   sink: MinimalDbAdapter;
   /** Source — where raw chain events are read from. Required for sync() and subscribe(). */
   source?: EventSource;
@@ -107,7 +107,7 @@ export interface Indexer {
     options?: { pollIntervalMs?: number; filters?: EventSourceFilters },
   ): UnsubscribeFn;
 
-  /** The entity store — query OpKit's derived tables here. */
+  /** The entity store — query op-index's derived tables here. */
   readonly store: EntityStore;
 
   /** Processing statistics. */
