@@ -46,6 +46,11 @@ export {
 } from './wsSource.js';
 
 export {
+  OpStreamRpcEventSource,
+  type OpStreamRpcEventSourceOptions,
+} from './opStreamRpcSource.js';
+
+export {
   createEventSource,
   probeOpStreamSchema,
   type EventSourceInput,

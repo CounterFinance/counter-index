@@ -3,9 +3,10 @@
  *
  * Give it what you have; it probes and picks the fastest available engine:
  *
- *   Tier 1 — DbEventSource   (OpStream-ready DB present → sub-millisecond SQL)
- *   Tier 2 — WsEventSource   (OpStream WebSocket broadcast → sub-second latency)
- *   Tier 3 — RpcEventSource  (plain OPNET getBlock loop — O(N), always works)
+ *   Tier 1 — DbEventSource          (OpStream-ready DB present → sub-millisecond SQL)
+ *   Tier 2 — WsEventSource           (OpStream WebSocket broadcast → sub-second latency)
+ *   Tier 3 — OpStreamRpcEventSource  (opstream_getBlockRange HTTP — up to 1000 blocks/call)
+ *   Tier 4 — RpcEventSource          (plain OPNET getBlock loop — O(N), always works)
  *
  * Usage:
  *   // Prefer OpStream DB, fall back to RPC if it's not ready:
@@ -14,8 +15,15 @@
  *     rpc: new JSONRpcProvider('https://mainnet.opnet.org'),
  *   });
  *
- *   // DB + WS (backfill via DB, live via WS — caller wires them separately):
- *   const source = await createEventSource({ db: adapter, ws: 'ws://localhost:8080' });
+ *   // OpStream HTTP JSON-RPC (no DB needed, fast backfill via getBlockRange):
+ *   const source = await createEventSource({
+ *     opStreamRpc: 'https://opstream-testnet-production.up.railway.app',
+ *   });
+ *
+ *   // OpStream HTTP + WebSocket for sub-second live:
+ *   const source = await createEventSource({
+ *     opStreamRpc: { url: 'https://opstream-testnet-production.up.railway.app', wsUrl: 'ws://localhost:8081' },
+ *   });
  *
  *   // DB only (throws if not OpStream-ready):
  *   const source = await createEventSource({ db: adapter });
@@ -31,6 +39,7 @@ import { DbEventSource } from './source.js';
 import type { BlockProvider, RpcEventSourceOptions } from './rpcSource.js';
 import { RpcEventSource } from './rpcSource.js';
 import { WsEventSource, type WsEventSourceOptions } from './wsSource.js';
+import { OpStreamRpcEventSource, type OpStreamRpcEventSourceOptions } from './opStreamRpcSource.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -41,6 +50,8 @@ export interface CreateEventSourceOptions {
   rpcOptions?: RpcEventSourceOptions;
   /** Options forwarded to WsEventSource when it is chosen. */
   wsOptions?: WsEventSourceOptions;
+  /** Options forwarded to OpStreamRpcEventSource when it is chosen. */
+  opStreamRpcOptions?: OpStreamRpcEventSourceOptions;
 }
 
 export interface EventSourceInput {
@@ -53,15 +64,26 @@ export interface EventSourceInput {
 
   /**
    * OpStream WebSocket broadcast URL (e.g. 'ws://localhost:8080').
-   * Tier 2 — chosen over RPC when present, but after DB probe fails.
+   * Tier 2 — chosen over OpStreamRpc/RPC when present, but after DB probe fails.
    * WsEventSource is live-only; pass `db` as well for backfill support.
    */
   ws?: string;
 
   /**
+   * OpStream HTTP JSON-RPC endpoint — string URL or object with url + optional wsUrl.
+   * Tier 3 — uses opstream_getBlockRange for fast chunked backfill (up to 1000 blocks/call).
+   * If wsUrl is provided, subscribe() tries WS first and falls back to polling.
+   *
+   * Examples:
+   *   opStreamRpc: 'https://opstream-testnet-production.up.railway.app'
+   *   opStreamRpc: { url: 'https://...', wsUrl: 'ws://localhost:8081' }
+   */
+  opStreamRpc?: string | { url: string; wsUrl?: string };
+
+  /**
    * OPNET RPC provider (e.g. opnet SDK's JSONRpcProvider). Used when db is
-   * absent or the schema probe fails and no ws URL is provided.
-   * Triggers Tier-3 getBlock loop.
+   * absent or the schema probe fails and no other source is available.
+   * Triggers Tier-4 getBlock loop (O(N) calls, slower for large ranges).
    */
   rpc?: BlockProvider;
 }
@@ -108,14 +130,21 @@ export async function createEventSource(
     return new WsEventSource(input.ws, options?.wsOptions);
   }
 
-  // ── Tier 3: RPC fallback ──────────────────────────────────────────────────
+  // ── Tier 3: OpStream HTTP JSON-RPC (getBlockRange — fast chunked backfill) ─
+  if (input.opStreamRpc !== undefined) {
+    const url   = typeof input.opStreamRpc === 'string' ? input.opStreamRpc : input.opStreamRpc.url;
+    const wsUrl = typeof input.opStreamRpc === 'object' ? input.opStreamRpc.wsUrl : undefined;
+    return new OpStreamRpcEventSource(url, { wsUrl, ...options?.opStreamRpcOptions });
+  }
+
+  // ── Tier 4: OPNET RPC fallback (block-by-block) ───────────────────────────
   if (input.rpc) {
     return new RpcEventSource(input.rpc, options?.rpcOptions);
   }
 
   throw new Error(
     '[op-index] createEventSource: no valid source provided. ' +
-    'Pass a db path/adapter, a ws URL, an rpc BlockProvider, or a combination.',
+    'Pass a db path/adapter, a ws URL, an opStreamRpc URL, an rpc BlockProvider, or a combination.',
   );
 }
 
