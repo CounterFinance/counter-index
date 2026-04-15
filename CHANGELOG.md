@@ -2,7 +2,22 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
-## [0.1.2] — 2026-04-15
+## [0.1.3] — 2026-04-15
+
+### Added
+
+- **`opstream_subscribe` protocol support** (`WsEventSource`, `OpStreamRpcEventSource`) —
+  both WebSocket sources now send `opstream_subscribe("logs", filter)` on connect,
+  opting in to server-side filtered push on new OpStream servers. A three-path message
+  parser handles all server generations transparently:
+  1. `opstream_subscription` notification (new subscribed mode)
+  2. JSON-RPC ack (subscribe/unsubscribe response) — ignored
+  3. Legacy plain `WebhookEvent` (old broadcast-only servers)
+  Old servers are unaffected — they ignore the subscribe request and keep broadcasting.
+  `WsEventSourceOptions` gains a `subscribeFilter` field (`{ address?, eventNames? }`)
+  for server-side address/event-name filtering when the server supports it.
+
+## [0.1.2] — 2026-04-14
 
 ### Added
 
@@ -23,17 +38,6 @@ All notable changes to `@opnet-collective/op-index` are documented here.
   `OpStreamRpcEventSource` between the `ws` tier and the `rpc` tier.
   `CreateEventSourceOptions` gains `opStreamRpcOptions` for forwarding constructor
   options.
-
-- **`opstream_subscribe` protocol support** (`WsEventSource`, `OpStreamRpcEventSource`) —
-  both WebSocket sources now send `opstream_subscribe("logs", filter)` on connect,
-  opting in to server-side filtered push on new OpStream servers. A three-path message
-  parser handles all server generations transparently:
-  1. `opstream_subscription` notification (new subscribed mode)
-  2. JSON-RPC ack (subscribe/unsubscribe response) — ignored
-  3. Legacy plain `WebhookEvent` (old broadcast-only servers)
-  Old servers are unaffected — they ignore the subscribe request and keep broadcasting.
-  `WsEventSourceOptions` gains a `subscribeFilter` field (`{ address?, eventNames? }`)
-  for server-side address/event-name filtering when the server supports it.
 
 ## [0.1.1] — 2026-04-07
 
