@@ -2,6 +2,14 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.4] — 2026-04-15
+
+### Changed
+
+- **`Connection.items` → `Connection.nodes`** — renamed the result array field on all
+  connection types to match the Relay spec and The Graph convention. Any query using
+  `{ items { ... } }` must be updated to `{ nodes { ... } }`.
+
 ## [0.1.3] — 2026-04-15
 
 ### Added

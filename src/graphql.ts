@@ -198,7 +198,7 @@ function buildConnectionType(entityName: string, entityType: GraphQLObjectType):
   return new GraphQLObjectType({
     name: `${entityName}Connection`,
     fields: {
-      items:      { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(entityType))) },
+      nodes:      { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(entityType))) },
       pageInfo:   { type: new GraphQLNonNull(PageInfoType) },
       totalCount: { type: new GraphQLNonNull(GraphQLInt) },
     },
@@ -432,7 +432,7 @@ export function buildGraphQLSchema(
           : null;
 
         return {
-          items:      page.map((r) => serialiseRecord(r, def)),
+          nodes:      page.map((r) => serialiseRecord(r, def)),
           pageInfo:   { hasNextPage, endCursor },
           totalCount,
         };
