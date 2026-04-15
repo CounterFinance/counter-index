@@ -97,14 +97,14 @@ describe('buildGraphQLSchema — shape', () => {
     expect(argNames).toContain('after');
   });
 
-  it('plural query return type is a Connection with items / pageInfo / totalCount', async () => {
+  it('plural query return type is a Connection with nodes / pageInfo / totalCount', async () => {
     const store = await makeStore(adapter);
     const gql = buildGraphQLSchema(schema, store);
     // PoolConnection fields
     const connType = gql.getType('PoolConnection');
     expect(connType).toBeDefined();
     const connFields = (connType as import('graphql').GraphQLObjectType).getFields();
-    expect(connFields['items']).toBeDefined();
+    expect(connFields['nodes']).toBeDefined();
     expect(connFields['pageInfo']).toBeDefined();
     expect(connFields['totalCount']).toBeDefined();
   });
@@ -186,26 +186,26 @@ describe('pools() — Connection shape', () => {
     gqlSchema = buildGraphQLSchema(schema, store);
   });
 
-  it('returns items, pageInfo, totalCount', async () => {
+  it('returns nodes, pageInfo, totalCount', async () => {
     const result = await graphql({
       schema: gqlSchema,
-      source: `{ pools { items { id } pageInfo { hasNextPage endCursor } totalCount } }`,
+      source: `{ pools { nodes { id } pageInfo { hasNextPage endCursor } totalCount } }`,
     });
     expect(result.errors).toBeUndefined();
-    const conn = result.data!['pools'] as { items: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null }; totalCount: number };
-    expect(conn.items.length).toBe(3);
+    const conn = result.data!['pools'] as { nodes: unknown[]; pageInfo: { hasNextPage: boolean; endCursor: string | null }; totalCount: number };
+    expect(conn.nodes.length).toBe(3);
     expect(conn.totalCount).toBe(3);
     expect(conn.pageInfo.hasNextPage).toBe(false);
   });
 
-  it('returns empty items array and totalCount 0 when no entities', async () => {
+  it('returns empty nodes array and totalCount 0 when no entities', async () => {
     const empty = createTestAdapter();
     const emptyStore = await makeStore(empty);
     const emptySchema = buildGraphQLSchema(schema, emptyStore);
-    const result = await graphql({ schema: emptySchema, source: `{ pools { items { id } totalCount pageInfo { hasNextPage endCursor } } }` });
+    const result = await graphql({ schema: emptySchema, source: `{ pools { nodes { id } totalCount pageInfo { hasNextPage endCursor } } }` });
     expect(result.errors).toBeUndefined();
-    const conn = result.data!['pools'] as { items: unknown[]; totalCount: number; pageInfo: { endCursor: string | null } };
-    expect(conn.items).toEqual([]);
+    const conn = result.data!['pools'] as { nodes: unknown[]; totalCount: number; pageInfo: { endCursor: string | null } };
+    expect(conn.nodes).toEqual([]);
     expect(conn.totalCount).toBe(0);
     expect(conn.pageInfo.endCursor).toBeNull();
   });
@@ -227,11 +227,11 @@ describe('pools() — where filters', () => {
   });
 
   function poolIds(result: Awaited<ReturnType<typeof graphql>>) {
-    return ((result.data!['pools'] as { items: { id: string }[] }).items).map((p) => p.id);
+    return ((result.data!['pools'] as { nodes: { id: string }[] }).nodes).map((p) => p.id);
   }
 
   it('exact match on string field', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token0: "WBTC" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token0: "WBTC" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     const ids = poolIds(r);
     expect(ids).toContain('pool-1');
@@ -240,37 +240,37 @@ describe('pools() — where filters', () => {
   });
 
   it('_not filter', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token0_not: "WBTC" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token0_not: "WBTC" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-3']);
   });
 
   it('_contains filter', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token1_contains: "OT" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token1_contains: "OT" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toContain('pool-1'); // MOTO
   });
 
   it('_starts_with filter', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { address_starts_with: "0xa" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { address_starts_with: "0xa" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-1']);
   });
 
   it('_ends_with filter', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { address_ends_with: "bb" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { address_ends_with: "bb" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-2']);
   });
 
   it('exact match on int field', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { fee: 5 }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { fee: 5 }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-2']);
   });
 
   it('_gt filter on int field', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { fee_gt: 5 }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { fee_gt: 5 }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     const ids = poolIds(r);
     expect(ids).toContain('pool-1');
@@ -279,25 +279,25 @@ describe('pools() — where filters', () => {
   });
 
   it('_lte filter on int field', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { fee_lte: 5 }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { fee_lte: 5 }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-2']);
   });
 
   it('exact match on boolean', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { active: false }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { active: false }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-3']);
   });
 
   it('filter by id', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { id: "pool-2" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { id: "pool-2" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     expect(poolIds(r)).toEqual(['pool-2']);
   });
 
   it('BigInt field filter with string literal', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { reserve0_gt: "500000" }) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { reserve0_gt: "500000" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
     const ids = poolIds(r);
     expect(ids).toContain('pool-1');
@@ -306,7 +306,7 @@ describe('pools() — where filters', () => {
   });
 
   it('totalCount reflects filtered count, not total', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token0: "WBTC" }) { items { id } totalCount } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { token0: "WBTC" }) { nodes { id } totalCount } }` });
     expect(r.errors).toBeUndefined();
     expect((result: unknown) => result).toBeDefined();
     const conn = r.data!['pools'] as { totalCount: number };
@@ -330,41 +330,41 @@ describe('pools() — ordering', () => {
   });
 
   it('orderBy fee asc', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: fee, orderDirection: asc) { items { fee } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: fee, orderDirection: asc) { nodes { fee } } }` });
     expect(r.errors).toBeUndefined();
-    const fees = (r.data!['pools'] as { items: { fee: number }[] }).items.map((p) => p.fee);
+    const fees = (r.data!['pools'] as { nodes: { fee: number }[] }).nodes.map((p) => p.fee);
     expect(fees).toEqual([5, 30, 30]);
   });
 
   it('orderBy fee desc', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: fee, orderDirection: desc) { items { fee } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: fee, orderDirection: desc) { nodes { fee } } }` });
     expect(r.errors).toBeUndefined();
-    const fees = (r.data!['pools'] as { items: { fee: number }[] }).items.map((p) => p.fee);
+    const fees = (r.data!['pools'] as { nodes: { fee: number }[] }).nodes.map((p) => p.fee);
     expect(fees).toEqual([30, 30, 5]);
   });
 
   it('orderBy id asc', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc) { items { id } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
-    const ids = (r.data!['pools'] as { items: { id: string }[] }).items.map((p) => p.id);
+    const ids = (r.data!['pools'] as { nodes: { id: string }[] }).nodes.map((p) => p.id);
     expect(ids).toEqual(['pool-1', 'pool-2', 'pool-3']);
   });
 
   it('orderBy BigInt field desc', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: reserve0, orderDirection: desc) { items { reserve0 } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: reserve0, orderDirection: desc) { nodes { reserve0 } } }` });
     expect(r.errors).toBeUndefined();
-    const reserves = (r.data!['pools'] as { items: { reserve0: string }[] }).items.map((p) => p.reserve0);
+    const reserves = (r.data!['pools'] as { nodes: { reserve0: string }[] }).nodes.map((p) => p.reserve0);
     expect(reserves).toEqual(['2000000', '1000000', '300000']);
   });
 
   it('ties broken by id (stable sort)', async () => {
     // pool-1 and pool-3 both have fee: 30 — id tiebreaker should give pool-1 first
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: fee, orderDirection: asc) { items { id fee } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: fee, orderDirection: asc) { nodes { id fee } } }` });
     expect(r.errors).toBeUndefined();
-    const items = (r.data!['pools'] as { items: { id: string; fee: number }[] }).items;
+    const nodes = (r.data!['pools'] as { nodes: { id: string; fee: number }[] }).nodes;
     // fee-5 first, then fee-30 x2 sorted by id
-    expect(items[1]!.id).toBe('pool-1');
-    expect(items[2]!.id).toBe('pool-3');
+    expect(nodes[1]!.id).toBe('pool-1');
+    expect(nodes[2]!.id).toBe('pool-3');
   });
 });
 
@@ -384,15 +384,15 @@ describe('pools() — cursor pagination', () => {
   });
 
   it('first limits items', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc, first: 2) { items { id } pageInfo { hasNextPage } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc, first: 2) { nodes { id } pageInfo { hasNextPage } } }` });
     expect(r.errors).toBeUndefined();
-    const conn = r.data!['pools'] as { items: { id: string }[]; pageInfo: { hasNextPage: boolean } };
-    expect(conn.items.length).toBe(2);
+    const conn = r.data!['pools'] as { nodes: { id: string }[]; pageInfo: { hasNextPage: boolean } };
+    expect(conn.nodes.length).toBe(2);
     expect(conn.pageInfo.hasNextPage).toBe(true);
   });
 
   it('hasNextPage false on last page', async () => {
-    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc, first: 10) { items { id } pageInfo { hasNextPage } } }` });
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc, first: 10) { nodes { id } pageInfo { hasNextPage } } }` });
     expect(r.errors).toBeUndefined();
     expect((r.data!['pools'] as { pageInfo: { hasNextPage: boolean } }).pageInfo.hasNextPage).toBe(false);
   });
@@ -406,18 +406,18 @@ describe('pools() — cursor pagination', () => {
 
   it('after cursor fetches next page', async () => {
     // Page 1
-    const page1 = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc, first: 2) { items { id } pageInfo { endCursor hasNextPage } } }` });
+    const page1 = await graphql({ schema: gqlSchema, source: `{ pools(orderBy: id, orderDirection: asc, first: 2) { nodes { id } pageInfo { endCursor hasNextPage } } }` });
     const { endCursor, hasNextPage } = (page1.data!['pools'] as { pageInfo: { endCursor: string; hasNextPage: boolean } }).pageInfo;
     expect(hasNextPage).toBe(true);
 
     // Page 2 using cursor
     const page2 = await graphql({
       schema: gqlSchema,
-      source: `{ pools(orderBy: id, orderDirection: asc, first: 2, after: "${endCursor}") { items { id } pageInfo { hasNextPage } } }`,
+      source: `{ pools(orderBy: id, orderDirection: asc, first: 2, after: "${endCursor}") { nodes { id } pageInfo { hasNextPage } } }`,
     });
     expect(page2.errors).toBeUndefined();
-    const conn2 = page2.data!['pools'] as { items: { id: string }[]; pageInfo: { hasNextPage: boolean } };
-    expect(conn2.items.map((i) => i.id)).toEqual(['pool-3']);
+    const conn2 = page2.data!['pools'] as { nodes: { id: string }[]; pageInfo: { hasNextPage: boolean } };
+    expect(conn2.nodes.map((i) => i.id)).toEqual(['pool-3']);
     expect(conn2.pageInfo.hasNextPage).toBe(false);
   });
 
@@ -425,7 +425,7 @@ describe('pools() — cursor pagination', () => {
     const cursor = encodeCursor('pool-1');
     const r = await graphql({
       schema: gqlSchema,
-      source: `{ pools(orderBy: id, orderDirection: asc, first: 1, after: "${cursor}") { items { id } totalCount } }`,
+      source: `{ pools(orderBy: id, orderDirection: asc, first: 1, after: "${cursor}") { nodes { id } totalCount } }`,
     });
     expect(r.errors).toBeUndefined();
     // totalCount = full filtered count, not just this page
@@ -436,11 +436,11 @@ describe('pools() — cursor pagination', () => {
     const badCursor = encodeCursor('nonexistent-id');
     const r = await graphql({
       schema: gqlSchema,
-      source: `{ pools(orderBy: id, orderDirection: asc, first: 10, after: "${badCursor}") { items { id } } }`,
+      source: `{ pools(orderBy: id, orderDirection: asc, first: 10, after: "${badCursor}") { nodes { id } } }`,
     });
     expect(r.errors).toBeUndefined();
     // cursor not found → no slice, returns all
-    expect((r.data!['pools'] as { items: { id: string }[] }).items.length).toBe(3);
+    expect((r.data!['pools'] as { nodes: { id: string }[] }).nodes.length).toBe(3);
   });
 });
 
@@ -460,8 +460,8 @@ describe('multiple entity types', () => {
     const result = await graphql({
       schema: gqlSchema,
       source: `{
-        pools { items { id } totalCount }
-        tokens { items { id symbol } totalCount }
+        pools { nodes { id } totalCount }
+        tokens { nodes { id symbol } totalCount }
         token(id: "tok-1") { symbol volume }
       }`,
     });
