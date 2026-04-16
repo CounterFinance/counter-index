@@ -2,33 +2,28 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
-  test:
-    name: Test (Node ${{ matrix.node }})
+  check:
+    name: Typecheck and Test
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node: [22, 23]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js ${{ matrix.node }}
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
-          cache: npm
+          node-version: '24'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
+      - name: Typecheck
         run: npx tsc --noEmit
 
-      - name: Run tests
+      - name: Test
         run: npm test
