@@ -1,0 +1,105 @@
+name: Release
+
+# Triggers when a PR is merged into main (the dev→main release PR).
+# The release commit (version bump + changelog) lands on dev first.
+# main is then fast-forwarded to match dev exactly.
+#
+# Flow:
+#   1. Check out dev
+#   2. Merge the PR merge commit from main into dev (ff)
+#   3. Bump version, update CHANGELOG, commit on dev
+#   4. Tag on dev
+#   5. Push dev
+#   6. Fast-forward main to dev (same commit — no drift ever)
+#
+# npm publish is handled manually after the tag is created.
+#
+# Required labels (create in repo Settings → Labels):
+#   semver:patch   — default, bumps x.y.Z
+#   semver:minor   — bumps x.Y.z
+#   semver:major   — bumps X.y.z
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Bump version and update changelog
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: dev
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine version bump type
+        id: bump
+        run: |
+          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if echo "$LABELS" | grep -q 'semver:major'; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          elif echo "$LABELS" | grep -q 'semver:minor'; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          else
+            echo "type=patch" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge PR commit from main into dev
+        run: |
+          git fetch origin main
+          git merge origin/main --ff-only
+
+      - name: Bump version in package.json
+        id: version
+        run: |
+          npm version ${{ steps.bump.outputs.type }} --no-git-tag-version
+          NEW=$(node -p "require('./package.json').version")
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+
+      - name: Prepend CHANGELOG entry
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          node << 'SCRIPT'
+          const fs    = require('fs');
+          const ver   = process.env.NEW_VERSION;
+          const date  = new Date().toISOString().slice(0, 10);
+          const pr    = process.env.PR_NUMBER;
+          const title = process.env.PR_TITLE;
+
+          const entry   = `\n## [${ver}] - ${date}\n- ${title} (#${pr})\n`;
+          const current = fs.readFileSync('CHANGELOG.md', 'utf8');
+          // Insert after the first "---" separator line
+          const updated = current.replace(/^---$/m, `---\n${entry}`);
+          fs.writeFileSync('CHANGELOG.md', updated);
+          SCRIPT
+
+      - name: Commit and tag on dev, fast-forward main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore: release v${{ steps.version.outputs.new }} [skip ci]"
+          git tag "v${{ steps.version.outputs.new }}"
+          # Release commit lands on dev
+          git push origin dev --follow-tags
+          # main fast-forwards to the same commit
+          git push origin HEAD:main
