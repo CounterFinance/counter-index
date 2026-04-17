@@ -135,4 +135,32 @@ describe('DbEventSource.query', () => {
     expect(events[0]!.revertReason).toBe('insufficient balance');
   });
 
+  it('populates txEvents with sibling events from the same tx', async () => {
+    const events = await source.query(101, 101, { eventNames: ['Approval'] });
+    expect(events).toHaveLength(1);
+    const approval = events[0]!;
+    // The only Approval is on tx2. tx2 also has a Transferred event at log_index 0.
+    expect(approval.txEvents).toBeDefined();
+    const bucket = approval.txEvents!.get('0xtoken1');
+    expect(bucket).toBeDefined();
+    expect(bucket!.map(e => e.type).sort()).toEqual(['Approval', 'Transferred']);
+  });
+
+  it('txEvents is shared by reference for sibling events from the same tx', async () => {
+    const events = await source.query(101, 101, { contract: '0xtoken1' });
+    // Both events here are from tx2 (Transferred + Approval). They share the Map.
+    expect(events).toHaveLength(2);
+    expect(events[0]!.txEvents).toBe(events[1]!.txEvents);
+  });
+
+  it('txEvents is scoped per-tx (different txs get different maps)', async () => {
+    const events = await source.query(101, 101);
+    // block 101 has tx2 and tx3 — distinct Maps
+    const tx2Event = events.find(e => e.txHash === '0xtx2');
+    const tx3Event = events.find(e => e.txHash === '0xtx3');
+    expect(tx2Event?.txEvents).toBeDefined();
+    expect(tx3Event?.txEvents).toBeDefined();
+    expect(tx2Event!.txEvents).not.toBe(tx3Event!.txEvents);
+  });
+
 });

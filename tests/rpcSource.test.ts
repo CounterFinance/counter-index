@@ -184,6 +184,64 @@ describe('RpcEventSource.query', () => {
     expect(events[0]!.blockTimestamp).toBe(1712340000);
   });
 
+  it('populates txEvents with all sibling events in the same tx', async () => {
+    const ROUTER = '0xrouter';
+    const TOKEN  = '0xtoken';
+    const blocks = new Map([
+      [100, makeBlock(100, [makeTx('tx1', {
+        [ROUTER]: [
+          { type: 'SwapExecuted', data: new Uint8Array([1]) },
+        ],
+        [TOKEN]: [
+          { type: 'Transferred', data: new Uint8Array([2]) },
+        ],
+      })])],
+    ]);
+    const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
+    const events = await source.query(100, 100);
+    expect(events).toHaveLength(2);
+    for (const e of events) {
+      expect(e.txEvents).toBeDefined();
+      expect(e.txEvents!.get(ROUTER)?.[0]?.type).toBe('SwapExecuted');
+      expect(e.txEvents!.get(TOKEN)?.[0]?.type).toBe('Transferred');
+    }
+    // Shared reference across sibling events from the same tx
+    expect(events[0]!.txEvents).toBe(events[1]!.txEvents);
+  });
+
+  it('txEvents covers all events even when filtered event names exclude siblings', async () => {
+    const ROUTER = '0xrouter';
+    const TOKEN  = '0xtoken';
+    const blocks = new Map([
+      [100, makeBlock(100, [makeTx('tx1', {
+        [ROUTER]: [{ type: 'SwapExecuted', data: new Uint8Array(0) }],
+        [TOKEN]:  [{ type: 'Transferred',  data: new Uint8Array(0) }],
+      })])],
+    ]);
+    const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
+    const events = await source.query(100, 100, { eventNames: ['SwapExecuted'] });
+    expect(events).toHaveLength(1);
+    // Even though we filtered to SwapExecuted only, txEvents still contains Transferred
+    expect(events[0]!.txEvents!.get(TOKEN)?.[0]?.type).toBe('Transferred');
+  });
+
+  it('txEvents is scoped per-tx (different txs get different maps)', async () => {
+    const blocks = new Map([
+      [100, makeBlock(100, [
+        makeTx('tx1', { '0xA': [{ type: 'Evt', data: new Uint8Array(0) }] }),
+        makeTx('tx2', { '0xB': [{ type: 'Evt', data: new Uint8Array(0) }] }),
+      ])],
+    ]);
+    const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
+    const events = await source.query(100, 100);
+    expect(events).toHaveLength(2);
+    expect(events[0]!.txEvents).not.toBe(events[1]!.txEvents);
+    expect(events[0]!.txEvents!.has('0xA')).toBe(true);
+    expect(events[0]!.txEvents!.has('0xB')).toBe(false);
+    expect(events[1]!.txEvents!.has('0xB')).toBe(true);
+    expect(events[1]!.txEvents!.has('0xA')).toBe(false);
+  });
+
   it('retries on block fetch failure and returns null after maxRetries', async () => {
     let calls = 0;
     const failProvider: BlockProvider = {
