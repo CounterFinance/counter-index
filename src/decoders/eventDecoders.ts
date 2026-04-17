@@ -110,26 +110,30 @@ function decodeLiquidityAdded(rawData: Buffer | Uint8Array): Record<string, unkn
 
 /**
  * PoolCreated (Motoswap factory)
- * Layout: token0 (32 addr) + token1 (32 addr) = 64 bytes
+ * Layout: token0 (32 addr) + token1 (32 addr) + pair (32 addr) = 96 bytes
+ * The pair address at offset 64 is the newly deployed pair contract address.
  */
 function decodePoolCreated(rawData: Buffer | Uint8Array): Record<string, unknown> | null {
-  if (rawData.length < 64) return null;
+  if (rawData.length < 96) return null;
   return {
     token0: toHex(rawData, 0, 32),
     token1: toHex(rawData, 32, 32),
+    pair:   toHex(rawData, 64, 32),
   };
 }
 
 /**
  * SwapExecuted (NativeSwap completed swap)
- * Layout: buyer (32 addr) + amountIn (32 U256) + amountOut (32 U256) = 96 bytes
+ * Layout: buyer (32 addr) + amountIn (32 U256) + amountOut (32 U256) [+ totalFees (32 U256)]
+ * totalFees is optional — older deployed contracts emit 96 bytes without it.
  */
 function decodeSwapExecuted(rawData: Buffer | Uint8Array): Record<string, unknown> | null {
   if (rawData.length < 96) return null;
   return {
-    buyer: toHex(rawData, 0, 32),
-    amountIn: readU256(rawData, 32),
+    buyer:     toHex(rawData, 0, 32),
+    amountIn:  readU256(rawData, 32),
     amountOut: readU256(rawData, 64),
+    totalFees: rawData.length >= 128 ? readU256(rawData, 96) : '0',
   };
 }
 
