@@ -22,15 +22,17 @@ npm install
 ## Development workflow
 
 ```bash
-npm test              # run all 165+ tests (vitest)
+npm test              # run all tests (vitest)
 npm run test:watch    # watch mode
 npx tsc --noEmit      # type check — must be clean
+npm run lint          # ESLint — must be zero errors
 ```
 
 Or with `just` if you have it installed:
 
 ```bash
-just check            # test + typecheck in one shot
+just check            # test + typecheck + lint in one shot
+just lint-fix         # auto-fix lint issues
 just test-watch       # watch mode
 just doctor           # verify your environment
 ```
@@ -61,6 +63,7 @@ Every new behaviour needs a test. op-index targets 100% branch coverage on publi
 
 - `npm test` passes
 - `npx tsc --noEmit` passes with no errors
+- `npm run lint` passes with zero errors
 - New behaviour is covered by tests
 - Docs updated if the public API changed
 
