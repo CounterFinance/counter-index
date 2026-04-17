@@ -149,6 +149,20 @@ function mapBlocksToEvents(
 
       const failed = tx.revert !== undefined;
 
+      // Build the txEvents Map once per tx — covers ALL contract addresses and
+      // ALL event names regardless of filters. `tx.events` is a flat array from
+      // opstream_getBlockRange, so we group by contractAddress here.
+      const txEvents = new Map<string, Array<{ type: string; raw: Uint8Array }>>();
+      for (const entry of tx.events) {
+        const raw = base64ToUint8Array(entry.data);
+        const bucket = txEvents.get(entry.contractAddress);
+        if (bucket) {
+          bucket.push({ type: entry.type, raw });
+        } else {
+          txEvents.set(entry.contractAddress, [{ type: entry.type, raw }]);
+        }
+      }
+
       for (const ev of tx.events) {
         if (filters?.eventNames && !filters.eventNames.includes(ev.type)) continue;
 
@@ -171,6 +185,7 @@ function mapBlocksToEvents(
           burnedBitcoin:   tx.burnedBitcoin ? hexToBigInt(tx.burnedBitcoin) : undefined,
           failed,
           revertReason:    tx.revert ?? undefined,
+          txEvents,
         });
       }
     }

@@ -96,6 +96,21 @@ function extractEvents(
   for (const [txIndex, tx] of block.transactions.entries()) {
     if (tx.OPNetType !== INTERACTION_TYPE || !tx.events) continue;
 
+    // Build the txEvents Map once per tx — covers ALL contract addresses and ALL
+    // event names regardless of filters, so router-correlation handlers can find
+    // sibling events even when the handler is registered for a filtered event.
+    // The Map is shared by reference across every event emitted from this tx.
+    const txEvents = new Map<string, Array<{ type: string; raw: Uint8Array }>>();
+    for (const [contractAddr, evts] of Object.entries(tx.events)) {
+      txEvents.set(
+        contractAddr,
+        evts.map(e => ({
+          type: e.type,
+          raw:  e.data instanceof Uint8Array ? e.data : new Uint8Array(e.data),
+        })),
+      );
+    }
+
     // log_index is per-tx, 0-based, increments across all events in the tx
     // regardless of which contract emits them — matches OpStream's convention.
     let logIndex = 0;
@@ -134,6 +149,7 @@ function extractEvents(
           burnedBitcoin:   tx.burnedBitcoin != null ? BigInt(tx.burnedBitcoin) : undefined,
           failed:          tx.failed,
           revertReason:    tx.revertReason ?? undefined,
+          txEvents,
         });
       }
     }

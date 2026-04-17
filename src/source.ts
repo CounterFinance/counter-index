@@ -76,6 +76,14 @@ interface EventJoinRow {
   block_timestamp: number | null;
 }
 
+/** Minimal sibling-event row — used to build the per-tx txEvents Map. */
+interface TxSiblingRow {
+  tx_hash: string;
+  contract_address: string;
+  event_name: string;
+  event_raw: Buffer | Uint8Array;
+}
+
 // ---------------------------------------------------------------------------
 // DbEventSource — reads from an OpStream-ready database
 // ---------------------------------------------------------------------------
@@ -132,7 +140,10 @@ function buildQuery(
   return { sql, params };
 }
 
-function rowToEvent(row: EventJoinRow): DecodedEvent {
+function rowToEvent(
+  row: EventJoinRow,
+  txEvents?: Map<string, Array<{ type: string; raw: Uint8Array }>>,
+): DecodedEvent {
   const rawData = row.event_raw instanceof Uint8Array
     ? row.event_raw
     : new Uint8Array(row.event_raw);
@@ -159,7 +170,58 @@ function rowToEvent(row: EventJoinRow): DecodedEvent {
     // SQLite stores failed as 0/1 (integer); Postgres returns native boolean.
     failed:         row.failed != null ? (row.failed !== 0 && row.failed !== false) : undefined,
     revertReason:   row.revert_reason ?? undefined,
+    txEvents,
   };
+}
+
+/**
+ * Fetch all sibling events for the given tx_hashes in the block range and
+ * build a per-tx Map keyed by contract address. Returns an empty Map if
+ * no tx hashes are provided.
+ *
+ * We scope by block_number in addition to tx_hash so the query plan can use
+ * the standard (block_number, log_index) index — avoids a full events scan.
+ */
+async function fetchTxEventsMaps(
+  db: MinimalDbAdapter,
+  fromBlock: number,
+  toBlock: number,
+  txHashes: string[],
+): Promise<Map<string, Map<string, Array<{ type: string; raw: Uint8Array }>>>> {
+  const result = new Map<string, Map<string, Array<{ type: string; raw: Uint8Array }>>>();
+  if (txHashes.length === 0) return result;
+
+  const p = (n: number): string => db.dialect === 'postgres' ? `$${n}` : '?';
+  const placeholders = txHashes.map((_, i) => p(i + 3)).join(', ');
+  const sql = `
+    SELECT tx_hash, contract_address, event_name, event_raw
+    FROM events
+    WHERE block_number BETWEEN ${p(1)} AND ${p(2)}
+      AND tx_hash IN (${placeholders})
+    ORDER BY block_number ASC, log_index ASC, id ASC
+  `;
+  const params: unknown[] = [fromBlock, toBlock, ...txHashes];
+  const rows = await db.all<TxSiblingRow>(sql, params);
+
+  for (const row of rows) {
+    const raw = row.event_raw instanceof Uint8Array
+      ? row.event_raw
+      : new Uint8Array(row.event_raw);
+
+    let perTx = result.get(row.tx_hash);
+    if (!perTx) {
+      perTx = new Map<string, Array<{ type: string; raw: Uint8Array }>>();
+      result.set(row.tx_hash, perTx);
+    }
+    const bucket = perTx.get(row.contract_address);
+    if (bucket) {
+      bucket.push({ type: row.event_name, raw });
+    } else {
+      perTx.set(row.contract_address, [{ type: row.event_name, raw }]);
+    }
+  }
+
+  return result;
 }
 
 export class DbEventSource implements EventSource {
@@ -175,7 +237,15 @@ export class DbEventSource implements EventSource {
   ): Promise<DecodedEvent[]> {
     const { sql, params } = buildQuery(fromBlock, toBlock, this.db.dialect, filters);
     const rows = await this.db.all<EventJoinRow>(sql, params);
-    return rows.map(rowToEvent);
+    if (rows.length === 0) return [];
+
+    // Second query: fetch full sibling-event sets for each tx in the primary
+    // result so txEvents parity holds even when the primary filter is narrow.
+    // This preserves the router-correlation pattern on DB replay.
+    const uniqueTxs = Array.from(new Set(rows.map(r => r.tx_hash)));
+    const txMaps = await fetchTxEventsMaps(this.db, fromBlock, toBlock, uniqueTxs);
+
+    return rows.map(row => rowToEvent(row, txMaps.get(row.tx_hash)));
   }
 
   subscribe(
