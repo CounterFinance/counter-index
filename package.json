@@ -49,7 +49,7 @@
     "postgres": "^3.4.9"
   },
   "peerDependencies": {
-    "graphql-ws": "^5.0.0",
+    "graphql-ws": "^6.0.0",
     "ws": "^8.0.0"
   },
   "peerDependenciesMeta": {
