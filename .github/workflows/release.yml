@@ -18,6 +18,7 @@ name: Release
 #   semver:patch   — default, bumps x.y.Z
 #   semver:minor   — bumps x.Y.z
 #   semver:major   — bumps X.y.z
+#   skip-release   — merges to main without a version bump or tag (CHANGELOG/docs fixes etc.)
 
 on:
   pull_request:
@@ -48,8 +49,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check for skip-release label
+        id: check
+        run: |
+          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if echo "$LABELS" | grep -q 'skip-release'; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Determine version bump type
         id: bump
+        if: steps.check.outputs.skip != 'true'
         run: |
           LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
           if echo "$LABELS" | grep -q 'semver:major'; then
@@ -67,12 +79,14 @@ jobs:
 
       - name: Bump version in package.json
         id: version
+        if: steps.check.outputs.skip != 'true'
         run: |
           npm version ${{ steps.bump.outputs.type }} --no-git-tag-version
           NEW=$(node -p "require('./package.json').version")
           echo "new=$NEW" >> $GITHUB_OUTPUT
 
       - name: Prepend CHANGELOG entry
+        if: steps.check.outputs.skip != 'true'
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -93,6 +107,7 @@ jobs:
           SCRIPT
 
       - name: Commit and tag on dev, fast-forward main
+        if: steps.check.outputs.skip != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -103,3 +118,8 @@ jobs:
           git push origin dev --follow-tags
           # main fast-forwards to the same commit
           git push origin HEAD:main
+
+      - name: Sync dev to main (skip-release)
+        if: steps.check.outputs.skip == 'true'
+        run: |
+          git push origin dev
