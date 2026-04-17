@@ -298,6 +298,7 @@ export class OpStreamRpcEventSource implements EventSource {
         // If already at a single block and the server still rejects it,
         // there is nothing we can do — skip it with a warning.
         if (chunkEnd <= fromBlock) {
+          // eslint-disable-next-line no-console
           console.warn(`[op-index] OpStreamRpcEventSource: skipping single dense block ${fromBlock} (server limit exceeded)`);
           this.onBlockSkipped?.(fromBlock);
           return [];
@@ -379,6 +380,7 @@ export class OpStreamRpcEventSource implements EventSource {
 
     const startPollFallback = (): void => {
       if (stopped || stopPoll) return;
+      // eslint-disable-next-line no-console
       console.warn('[op-index] OpStreamRpcEventSource: WS unavailable — falling back to polling');
       stopPoll = this._subscribePoll(fromBlock, onEvent, intervalMs);
     };
