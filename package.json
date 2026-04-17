@@ -1,6 +1,6 @@
 {
   "name": "@opnet-collective/op-index",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
   "type": "module",
   "engines": {
