@@ -2,6 +2,26 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.6] — 2026-04-17
+
+### Fixed
+
+- **`graphql-ws` peer dependency corrected to `^6.0.0`** — the declared peer dep was
+  `^5.0.0` but op-index imports from `'graphql-ws/use/ws'` which is the v6 path.
+  Consumers installing `graphql-ws@6` no longer get a peer dep conflict warning.
+
+## [0.1.5] — 2026-04-16
+
+### Added
+
+- **CI/CD release infrastructure** — `ci.yml` (typecheck + lint + test on push/PR),
+  `release.yml` (semver label → `npm version` → CHANGELOG prepend → annotated tag →
+  push dev + fast-forward main on every dev→main merge).
+- **ESLint** — flat config (`eslint.config.mjs`) with type-aware TypeScript rules,
+  `no-floating-promises` and `no-misused-promises` as errors.
+- **`justfile`** — `lint`, `lint-fix`, `check` recipes added.
+- **`CONTRIBUTING.md`** — documents the branch workflow, semver labels, and lint steps.
+
 ## [0.1.4] — 2026-04-15
 
 ### Changed
