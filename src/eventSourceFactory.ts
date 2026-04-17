@@ -119,6 +119,7 @@ export async function createEventSource(
       );
     }
 
+    // eslint-disable-next-line no-console
     console.warn(
       '[op-index] createEventSource: database is not OpStream-ready — ' +
       `falling back to ${input.ws ? 'WsEventSource' : 'RpcEventSource'}.`,

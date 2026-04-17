@@ -38,260 +38,260 @@ scaffold name="my-indexer":
     mkdir -p "$DEST/src/handlers" "$DEST/data"
 
     # ── package.json ──────────────────────────────────────────────────────────
-    cat > "$DEST/package.json" << 'PKGJSON'
-{
-  "name": "NAME_PLACEHOLDER",
-  "version": "0.1.0",
-  "type": "module",
-  "engines": { "node": ">=22.0.0" },
-  "scripts": {
-    "start": "npx tsx src/main.ts",
-    "typecheck": "npx tsc --noEmit"
-  },
-  "dependencies": {
-    "@opnet-collective/op-index": "file:../op-index"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
-  }
-}
-PKGJSON
+    cat > "$DEST/package.json" <<-'PKGJSON'
+    	{
+    	  "name": "NAME_PLACEHOLDER",
+    	  "version": "0.1.0",
+    	  "type": "module",
+    	  "engines": { "node": ">=22.0.0" },
+    	  "scripts": {
+    	    "start": "npx tsx src/main.ts",
+    	    "typecheck": "npx tsc --noEmit"
+    	  },
+    	  "dependencies": {
+    	    "@opnet-collective/op-index": "file:../op-index"
+    	  },
+    	  "devDependencies": {
+    	    "@types/node": "^22.0.0",
+    	    "tsx": "^4.19.0",
+    	    "typescript": "^5.7.0"
+    	  }
+    	}
+    	PKGJSON
     # Patch in the real name
     sed -i "s/NAME_PLACEHOLDER/{{name}}/" "$DEST/package.json"
 
     # ── tsconfig.json ─────────────────────────────────────────────────────────
-    cat > "$DEST/tsconfig.json" << 'TSCONFIG'
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "skipLibCheck": true,
-    "outDir": "dist"
-  },
-  "include": ["src"]
-}
-TSCONFIG
+    cat > "$DEST/tsconfig.json" <<-'TSCONFIG'
+    	{
+    	  "compilerOptions": {
+    	    "target": "ES2022",
+    	    "module": "NodeNext",
+    	    "moduleResolution": "NodeNext",
+    	    "strict": true,
+    	    "skipLibCheck": true,
+    	    "outDir": "dist"
+    	  },
+    	  "include": ["src"]
+    	}
+    	TSCONFIG
 
     # ── .gitignore ────────────────────────────────────────────────────────────
-    cat > "$DEST/.gitignore" << 'GITIGNORE'
-node_modules/
-dist/
-data/
-.env
-GITIGNORE
+    cat > "$DEST/.gitignore" <<-'GITIGNORE'
+    	node_modules/
+    	dist/
+    	data/
+    	.env
+    	GITIGNORE
 
     # ── .env.example ─────────────────────────────────────────────────────────
-    cat > "$DEST/.env.example" << 'ENVEX'
-# OpStream source database (SQLite — different file from sink)
-OPSTREAM_DB_PATH=../OpStream/data/opstream.db
+    cat > "$DEST/.env.example" <<-'ENVEX'
+    	# OpStream source database (SQLite — different file from sink)
+    	OPSTREAM_DB_PATH=../OpStream/data/opstream.db
 
-# This indexer's own database (sink — opindex_* tables)
-OPINDEX_DB_PATH=data/opindex.db
+    	# This indexer's own database (sink — opindex_* tables)
+    	OPINDEX_DB_PATH=data/opindex.db
 
-# Postgres alternative (set both to override SQLite paths above):
-# OPSTREAM_DB_URL=postgres://user:pass@localhost:5432/opstream
-# OPINDEX_DB_URL=postgres://user:pass@localhost:5432/opstream
+    	# Postgres alternative (set both to override SQLite paths above):
+    	# OPSTREAM_DB_URL=postgres://user:pass@localhost:5432/opstream
+    	# OPINDEX_DB_URL=postgres://user:pass@localhost:5432/opstream
 
-# Backfill starting block
-FROM_BLOCK=941400
+    	# Backfill starting block
+    	FROM_BLOCK=941400
 
-LOG_LEVEL=INFO
-ENVEX
+    	LOG_LEVEL=INFO
+    	ENVEX
 
     # ── src/handlers/transfers.ts ─────────────────────────────────────────────
-    cat > "$DEST/src/handlers/transfers.ts" << 'HANDLER'
-/**
- * Example handler — index OP-20 Transfer events into an Account entity.
- *
- * This file shows the pattern. Replace or extend with your own logic.
- */
+    cat > "$DEST/src/handlers/transfers.ts" <<-'HANDLER'
+    	/**
+    	 * Example handler — index OP-20 Transfer events into an Account entity.
+    	 *
+    	 * This file shows the pattern. Replace or extend with your own logic.
+    	 */
 
-import type { DecodedEvent, HandlerContext } from '@opnet-collective/op-index';
+    	import type { DecodedEvent, HandlerContext } from '@opnet-collective/op-index';
 
-export async function onTransferred(event: DecodedEvent, ctx: HandlerContext): Promise<void> {
-  if (!event.decoded) return;
+    	export async function onTransferred(event: DecodedEvent, ctx: HandlerContext): Promise<void> {
+    	  if (!event.decoded) return;
 
-  const from  = event.decoded['from']  as string;
-  const to    = event.decoded['to']    as string;
-  const value = BigInt(event.decoded['value'] as string);
+    	  const from  = event.decoded['from']  as string;
+    	  const to    = event.decoded['to']    as string;
+    	  const value = BigInt(event.decoded['value'] as string);
 
-  // Debit sender
-  const sender = await ctx.store.get('Account', from);
-  if (sender) {
-    await ctx.store.update('Account', from, {
-      balance: (sender['balance'] as bigint) - value,
-      txCount: (sender['txCount'] as number) + 1,
-      lastSeen: event.blockNumber,
-    });
-  } else {
-    await ctx.store.set('Account', from, {
-      address: from,
-      balance: 0n - value,
-      txCount: 1,
-      lastSeen: event.blockNumber,
-    });
-  }
+    	  // Debit sender
+    	  const sender = await ctx.store.get('Account', from);
+    	  if (sender) {
+    	    await ctx.store.update('Account', from, {
+    	      balance: (sender['balance'] as bigint) - value,
+    	      txCount: (sender['txCount'] as number) + 1,
+    	      lastSeen: event.blockNumber,
+    	    });
+    	  } else {
+    	    await ctx.store.set('Account', from, {
+    	      address: from,
+    	      balance: 0n - value,
+    	      txCount: 1,
+    	      lastSeen: event.blockNumber,
+    	    });
+    	  }
 
-  // Credit receiver
-  const receiver = await ctx.store.get('Account', to);
-  if (receiver) {
-    await ctx.store.update('Account', to, {
-      balance: (receiver['balance'] as bigint) + value,
-      lastSeen: event.blockNumber,
-    });
-  } else {
-    await ctx.store.set('Account', to, {
-      address: to,
-      balance: value,
-      txCount: 0,
-      lastSeen: event.blockNumber,
-    });
-  }
-}
-HANDLER
+    	  // Credit receiver
+    	  const receiver = await ctx.store.get('Account', to);
+    	  if (receiver) {
+    	    await ctx.store.update('Account', to, {
+    	      balance: (receiver['balance'] as bigint) + value,
+    	      lastSeen: event.blockNumber,
+    	    });
+    	  } else {
+    	    await ctx.store.set('Account', to, {
+    	      address: to,
+    	      balance: value,
+    	      txCount: 0,
+    	      lastSeen: event.blockNumber,
+    	    });
+    	  }
+    	}
+    	HANDLER
 
     # ── src/main.ts ───────────────────────────────────────────────────────────
-    cat > "$DEST/src/main.ts" << 'MAIN'
-/**
- * Indexer entry point.
- *
- * 1. Define your schema (entities → opindex_* SQL tables).
- * 2. Open source (OpStream DB) and sink (this indexer's DB).
- * 3. Register event handlers.
- * 4. Backfill historical blocks, then go live.
- */
+    cat > "$DEST/src/main.ts" <<-'MAIN'
+    	/**
+    	 * Indexer entry point.
+    	 *
+    	 * 1. Define your schema (entities → opindex_* SQL tables).
+    	 * 2. Open source (OpStream DB) and sink (this indexer's DB).
+    	 * 3. Register event handlers.
+    	 * 4. Backfill historical blocks, then go live.
+    	 */
 
-import {
-  defineSchema,
-  createIndexer,
-  DbEventSource,
-  openSqlite,
-} from '@opnet-collective/op-index';
+    	import {
+    	  defineSchema,
+    	  createIndexer,
+    	  DbEventSource,
+    	  openSqlite,
+    	} from '@opnet-collective/op-index';
 
-import { onTransferred } from './handlers/transfers.js';
+    	import { onTransferred } from './handlers/transfers.js';
 
-// ── Schema ────────────────────────────────────────────────────────────────────
-const schema = defineSchema({
-  Account: {
-    address:  { type: 'string' },
-    balance:  { type: 'bigint' },
-    txCount:  { type: 'int' },
-    lastSeen: { type: 'int' },
-  },
-});
+    	// ── Schema ────────────────────────────────────────────────────────────────────
+    	const schema = defineSchema({
+    	  Account: {
+    	    address:  { type: 'string' },
+    	    balance:  { type: 'bigint' },
+    	    txCount:  { type: 'int' },
+    	    lastSeen: { type: 'int' },
+    	  },
+    	});
 
-// ── Config ────────────────────────────────────────────────────────────────────
-const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '../OpStream/data/opstream.db';
-const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? 'data/opindex.db';
-const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? 941400);
+    	// ── Config ────────────────────────────────────────────────────────────────────
+    	const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '../OpStream/data/opstream.db';
+    	const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? 'data/opindex.db';
+    	const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? 941400);
 
-// ── Connections ───────────────────────────────────────────────────────────────
-// source — read-only, points at OpStream's database
-// sink   — this indexer's own database (opindex_* tables)
-const source = new DbEventSource(openSqlite(OPSTREAM_DB));
-const sink   = openSqlite(OPINDEX_DB);
+    	// ── Connections ───────────────────────────────────────────────────────────────
+    	// source — read-only, points at OpStream's database
+    	// sink   — this indexer's own database (opindex_* tables)
+    	const source = new DbEventSource(openSqlite(OPSTREAM_DB));
+    	const sink   = openSqlite(OPINDEX_DB);
 
-// ── Indexer ───────────────────────────────────────────────────────────────────
-const indexer = await createIndexer({ schema, sink, source });
+    	// ── Indexer ───────────────────────────────────────────────────────────────────
+    	const indexer = await createIndexer({ schema, sink, source });
 
-indexer.on('Transferred', onTransferred);
+    	indexer.on('Transferred', onTransferred);
 
-// Add more handlers here:
-// indexer.on('Swapped',  onSwapped);
-// indexer.on('Synced',   onSynced);
-// indexer.on('*',        onAnyEvent);   // wildcard
+    	// Add more handlers here:
+    	// indexer.on('Swapped',  onSwapped);
+    	// indexer.on('Synced',   onSynced);
+    	// indexer.on('*',        onAnyEvent);   // wildcard
 
-// ── Run ───────────────────────────────────────────────────────────────────────
-// Backfill: sync all events OpStream has already indexed.
-// sync() stops when there are no more events — safe to set a high ceiling.
-const TO_BLOCK = Number(process.env['TO_BLOCK'] ?? 999_999_999);
-const stats = await indexer.sync(FROM_BLOCK, TO_BLOCK);
-console.log('Backfill complete:', stats);
+    	// ── Run ───────────────────────────────────────────────────────────────────────
+    	// Backfill: sync all events OpStream has already indexed.
+    	// sync() stops when there are no more events — safe to set a high ceiling.
+    	const TO_BLOCK = Number(process.env['TO_BLOCK'] ?? 999_999_999);
+    	const stats = await indexer.sync(FROM_BLOCK, TO_BLOCK);
+    	console.log('Backfill complete:', stats);
 
-// Live: poll OpStream DB every 10s for new blocks (picks up from where sync left off)
-const stop = indexer.subscribe(stats.lastBlock + 1);
-console.log('Live indexing started. Ctrl+C to stop.');
+    	// Live: poll OpStream DB every 10s for new blocks (picks up from where sync left off)
+    	const stop = indexer.subscribe(stats.lastBlock + 1);
+    	console.log('Live indexing started. Ctrl+C to stop.');
 
-process.on('SIGINT',  () => { stop(); process.exit(0); });
-process.on('SIGTERM', () => { stop(); process.exit(0); });
-MAIN
+    	process.on('SIGINT',  () => { stop(); process.exit(0); });
+    	process.on('SIGTERM', () => { stop(); process.exit(0); });
+    	MAIN
 
     # ── Dockerfile ────────────────────────────────────────────────────────────
-    cat > "$DEST/Dockerfile" << 'DFILE'
-# Generated by: just scaffold (op-index)
-# Build context: Opnet-devs/ parent directory
-#   docker build -f NAME_PLACEHOLDER/Dockerfile -t NAME_PLACEHOLDER ..
+    cat > "$DEST/Dockerfile" <<-'DFILE'
+    	# Generated by: just scaffold (op-index)
+    	# Build context: Opnet-devs/ parent directory
+    	#   docker build -f NAME_PLACEHOLDER/Dockerfile -t NAME_PLACEHOLDER ..
 
-FROM node:22-alpine
-RUN apk add --no-cache dumb-init
+    	FROM node:22-alpine
+    	RUN apk add --no-cache dumb-init
 
-WORKDIR /app
+    	WORKDIR /app
 
-COPY op-index/ /op-index/
-COPY NAME_PLACEHOLDER/package*.json ./
-RUN npm install --prefer-offline
+    	COPY op-index/ /op-index/
+    	COPY NAME_PLACEHOLDER/package*.json ./
+    	RUN npm install --prefer-offline
 
-COPY NAME_PLACEHOLDER/src/        ./src/
-COPY NAME_PLACEHOLDER/tsconfig.json ./
+    	COPY NAME_PLACEHOLDER/src/        ./src/
+    	COPY NAME_PLACEHOLDER/tsconfig.json ./
 
-RUN mkdir -p /app/data && \
-    addgroup -g 1001 -S indexer && \
-    adduser  -u 1001 -S indexer -G indexer && \
-    chown -R indexer:indexer /app /op-index
-USER indexer
+    	RUN mkdir -p /app/data && \
+    	    addgroup -g 1001 -S indexer && \
+    	    adduser  -u 1001 -S indexer -G indexer && \
+    	    chown -R indexer:indexer /app /op-index
+    	USER indexer
 
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["npx", "tsx", "src/main.ts"]
-DFILE
+    	ENTRYPOINT ["dumb-init", "--"]
+    	CMD ["npx", "tsx", "src/main.ts"]
+    	DFILE
     sed -i "s/NAME_PLACEHOLDER/{{name}}/g" "$DEST/Dockerfile"
 
     # ── docker-compose.yml ────────────────────────────────────────────────────
-    cat > "$DEST/docker-compose.yml" << 'COMPOSE'
-# NAME_PLACEHOLDER + OpStream — full stack
-# Run from the Opnet-devs/ parent: docker compose -f NAME_PLACEHOLDER/docker-compose.yml up -d
+    cat > "$DEST/docker-compose.yml" <<-'COMPOSE'
+    	# NAME_PLACEHOLDER + OpStream — full stack
+    	# Run from the Opnet-devs/ parent: docker compose -f NAME_PLACEHOLDER/docker-compose.yml up -d
 
-services:
-  opstream:
-    build:
-      context: ..
-      dockerfile: OpStream/Dockerfile
-    image: opstream:latest
-    container_name: opstream
-    restart: unless-stopped
-    env_file: ../OpStream/.env
-    volumes:
-      - chain_data:/app/data
-    healthcheck:
-      test: ["CMD", "sh", "-c", "test -f /app/data/opstream.db || sleep 5"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
+    	services:
+    	  opstream:
+    	    build:
+    	      context: ..
+    	      dockerfile: OpStream/Dockerfile
+    	    image: opstream:latest
+    	    container_name: opstream
+    	    restart: unless-stopped
+    	    env_file: ../OpStream/.env
+    	    volumes:
+    	      - chain_data:/app/data
+    	    healthcheck:
+    	      test: ["CMD", "sh", "-c", "test -f /app/data/opstream.db || sleep 5"]
+    	      interval: 30s
+    	      timeout: 5s
+    	      retries: 3
+    	      start_period: 120s
 
-  indexer:
-    build:
-      context: ..
-      dockerfile: NAME_PLACEHOLDER/Dockerfile
-    image: NAME_PLACEHOLDER:latest
-    container_name: NAME_PLACEHOLDER
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      OPSTREAM_DB_PATH: /app/data/opstream.db
-      OPINDEX_DB_PATH:  /app/data/opindex.db
-    volumes:
-      - chain_data:/app/data
-    depends_on:
-      opstream:
-        condition: service_healthy
+    	  indexer:
+    	    build:
+    	      context: ..
+    	      dockerfile: NAME_PLACEHOLDER/Dockerfile
+    	    image: NAME_PLACEHOLDER:latest
+    	    container_name: NAME_PLACEHOLDER
+    	    restart: unless-stopped
+    	    env_file: .env
+    	    environment:
+    	      OPSTREAM_DB_PATH: /app/data/opstream.db
+    	      OPINDEX_DB_PATH:  /app/data/opindex.db
+    	    volumes:
+    	      - chain_data:/app/data
+    	    depends_on:
+    	      opstream:
+    	        condition: service_healthy
 
-volumes:
-  chain_data:
-COMPOSE
+    	volumes:
+    	  chain_data:
+    	COMPOSE
     sed -i "s/NAME_PLACEHOLDER/{{name}}/g" "$DEST/docker-compose.yml"
 
     # ── Install deps ──────────────────────────────────────────────────────────
@@ -345,8 +345,20 @@ typecheck:
     npx tsc --noEmit
     @echo "${GREEN}✔ No type errors${RESET}"
 
-# Run tests + typecheck
-check: test typecheck
+# ESLint — errors block, warnings are informational
+lint:
+    @echo "${BLUE}▶ Linting...${RESET}"
+    npx eslint src
+    @echo "${GREEN}✔ No lint errors${RESET}"
+
+# ESLint with auto-fix
+lint-fix:
+    @echo "${BLUE}▶ Linting (fix)...${RESET}"
+    npx eslint src --fix
+    @echo "${GREEN}✔ Done${RESET}"
+
+# Run tests + typecheck + lint
+check: test typecheck lint
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §3  Docker (full-stack — OpStream + op-index-based indexer)

@@ -110,7 +110,7 @@ function paramList(dialect: 'sqlite' | 'postgres', count: number, start = 1): st
 function serialise(value: unknown, type: FieldType, dialect: 'sqlite' | 'postgres'): unknown {
   if (value === null || value === undefined) return null;
   switch (type) {
-    case 'bigint':  return typeof value === 'bigint' ? value.toString() : String(value);
+    case 'bigint':  return typeof value === 'bigint' ? value.toString() : String(value as string | number | boolean);
     // Postgres has native BOOLEAN; SQLite stores as INTEGER (0/1).
     case 'boolean': return dialect === 'postgres' ? Boolean(value) : (value ? 1 : 0);
     default:        return value;
@@ -245,7 +245,7 @@ export async function createStore(
       const def = assertKnown(entity);
       const table = tableName(entity);
       const fields = Object.keys(def);
-      const values = [id, ...fields.map((f) => serialise(data[f], def[f]!.type, dialect))];
+      const values = [id, ...fields.map((f) => serialise(data[f], def[f].type, dialect))];
       await adapter.run(buildUpsert(table, fields, dialect), values);
 
       // Notify with the JS-typed record (not the serialised SQL form)
@@ -273,7 +273,7 @@ export async function createStore(
       const setValues: unknown[] = [];
       for (const [field, value] of Object.entries(partial)) {
         if (field in def) {
-          setValues.push(serialise(value, def[field]!.type, dialect));
+          setValues.push(serialise(value, def[field].type, dialect));
           setClauses.push(`${col(field)} = ${param(dialect, setValues.length)}`);
         }
       }
