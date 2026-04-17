@@ -59,13 +59,13 @@ function validateSchema(def: SchemaDefinition): void {
   if (names.length === 0) throw new Error('Schema must define at least one entity');
 
   for (const entityName of names) {
-    const fields = def[entityName]!;
+    const fields = def[entityName];
     const fieldNames = Object.keys(fields);
     if (fieldNames.length === 0) {
       throw new Error(`Entity "${entityName}" must have at least one field`);
     }
     for (const fieldName of fieldNames) {
-      const field = fields[fieldName]!;
+      const field = fields[fieldName];
       if (!VALID_FIELD_TYPES.has(field.type)) {
         throw new Error(
           `Entity "${entityName}" field "${fieldName}": unknown type "${field.type}"`,

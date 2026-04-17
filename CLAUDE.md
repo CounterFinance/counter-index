@@ -27,7 +27,7 @@ Semver guide for this project:
 - **Node.js 24** — `engines` in package.json enforces `>=24.0.0`. CI enforces 24.
 - **TypeScript strict** — `npx tsc --noEmit` must pass before any commit.
 - **Vitest** — all new behaviour needs tests. Run `npm test` before declaring work done.
-- **No ESLint** — not configured. Do not add ESLint lint steps to CI without first setting up the config.
+- **ESLint** — configured in `eslint.config.mjs` (flat config, type-aware). Run `npm run lint` or `just lint`. Zero errors required; `no-console` and `no-explicit-any` are warnings only. Auto-fix: `just lint-fix`.
 - **ES modules** — `"type": "module"` in package.json. Use `.js` extensions in imports even for `.ts` source files.
 - **better-sqlite3** — synchronous SQLite driver for `DbEventSource`.
 

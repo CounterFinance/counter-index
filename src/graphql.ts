@@ -237,36 +237,38 @@ function matchesFilter(
 ): boolean {
   for (const [key, filterValue] of Object.entries(where)) {
     if (filterValue === null || filterValue === undefined) continue;
+    // Filter values are always scalars from GraphQL input — safe to coerce.
+    const fv = filterValue as string | number | boolean | bigint;
     const { field, op } = parseFilterKey(key);
     const fieldType: FieldType = field === 'id' ? 'string' : (def[field]?.type ?? 'string');
     const recordValue = record[field];
     switch (op) {
       case 'eq':
-        if (String(recordValue) !== String(filterValue)) return false;
+        if (String(recordValue) !== String(fv)) return false;
         break;
       case 'not':
-        if (String(recordValue) === String(filterValue)) return false;
+        if (String(recordValue) === String(fv)) return false;
         break;
       case 'gt':
-        if (compareValues(recordValue, filterValue, fieldType) <= 0) return false;
+        if (compareValues(recordValue, fv, fieldType) <= 0) return false;
         break;
       case 'lt':
-        if (compareValues(recordValue, filterValue, fieldType) >= 0) return false;
+        if (compareValues(recordValue, fv, fieldType) >= 0) return false;
         break;
       case 'gte':
-        if (compareValues(recordValue, filterValue, fieldType) < 0) return false;
+        if (compareValues(recordValue, fv, fieldType) < 0) return false;
         break;
       case 'lte':
-        if (compareValues(recordValue, filterValue, fieldType) > 0) return false;
+        if (compareValues(recordValue, fv, fieldType) > 0) return false;
         break;
       case 'contains':
-        if (!String(recordValue).includes(String(filterValue))) return false;
+        if (!String(recordValue).includes(String(fv))) return false;
         break;
       case 'starts_with':
-        if (!String(recordValue).startsWith(String(filterValue))) return false;
+        if (!String(recordValue).startsWith(String(fv))) return false;
         break;
       case 'ends_with':
-        if (!String(recordValue).endsWith(String(filterValue))) return false;
+        if (!String(recordValue).endsWith(String(fv))) return false;
         break;
     }
   }
@@ -287,7 +289,7 @@ function serialiseRecord(
     if (val === undefined || val === null) {
       out[field] = null;
     } else if (fieldDef.type === 'bigint') {
-      out[field] = String(val);
+      out[field] = String(val as bigint);
     } else {
       out[field] = val;
     }
@@ -321,7 +323,7 @@ function makePushStream<T>(): PushStream<T> {
     },
     end() {
       done = true;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       waiting?.({ value: undefined as any, done: true });
     },
     [Symbol.asyncIterator](): AsyncIterator<T> {
@@ -428,7 +430,7 @@ export function buildGraphQLSchema(
         const page = records.slice(0, first);
 
         const endCursor = page.length > 0
-          ? encodeCursor(String(page[page.length - 1]!['id']))
+          ? encodeCursor(String(page[page.length - 1]['id']))
           : null;
 
         return {
@@ -502,7 +504,8 @@ export async function startSubscriptionServer(
   try {
     // Dynamic import — graphql-ws and ws are optional peer dependencies.
     // Using Function constructor to prevent TypeScript from trying to resolve
-    // the module paths at compile time.
+    // the module paths at compile time (avoids compile-time module resolution errors).
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const load = new Function('specifier', 'return import(specifier)') as
       (s: string) => Promise<Record<string, unknown>>;
 
@@ -515,6 +518,7 @@ export async function startSubscriptionServer(
     );
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const wss = new WebSocketServer({ server: httpServer });
   useServer({ schema: gqlSchema }, wss);
 }
