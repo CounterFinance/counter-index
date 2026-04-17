@@ -345,8 +345,20 @@ typecheck:
     npx tsc --noEmit
     @echo "${GREEN}✔ No type errors${RESET}"
 
-# Run tests + typecheck
-check: test typecheck
+# ESLint — errors block, warnings are informational
+lint:
+    @echo "${BLUE}▶ Linting...${RESET}"
+    npx eslint src
+    @echo "${GREEN}✔ No lint errors${RESET}"
+
+# ESLint with auto-fix
+lint-fix:
+    @echo "${BLUE}▶ Linting (fix)...${RESET}"
+    npx eslint src --fix
+    @echo "${GREEN}✔ Done${RESET}"
+
+# Run tests + typecheck + lint
+check: test typecheck lint
 
 # ══════════════════════════════════════════════════════════════════════════════
 # §3  Docker (full-stack — OpStream + op-index-based indexer)

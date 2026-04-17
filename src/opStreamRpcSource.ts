@@ -326,7 +326,7 @@ export class OpStreamRpcEventSource implements EventSource {
       f = end + 1;
     }
 
-    const results: DecodedEvent[][] = new Array(chunks.length);
+    const results: DecodedEvent[][] = new Array<DecodedEvent[]>(chunks.length);
 
     // Fetch in sliding batches of `concurrency`. Within each batch all requests
     // fire simultaneously; the next batch starts only after all complete.
