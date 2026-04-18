@@ -121,6 +121,12 @@ function deserialise(value: unknown, type: FieldType): unknown {
   if (value === null || value === undefined) return undefined;
   switch (type) {
     case 'bigint':  return BigInt(value as string);
+    // Postgres returns BIGINT columns as strings (JS number can't safely hold all
+    // int64 values). Normalise to `number` so consumers see the same JS type on
+    // both dialects — otherwise `store.get(...).someInt + 1` silently concatenates
+    // strings on Postgres and a counter field can explode past int64 range.
+    case 'int':     return Number(value);
+    case 'float':   return Number(value);
     // Handles SQLite integers (0/1) and Postgres native booleans (true/false).
     case 'boolean': return value !== 0 && value !== false;
     default:        return value;

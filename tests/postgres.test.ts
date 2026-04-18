@@ -261,6 +261,42 @@ describe('DbEventSource Postgres placeholders', () => {
   });
 });
 
+describe('Postgres int field normalisation on read', () => {
+  // The `postgres` driver returns BIGINT columns as STRING because JS number
+  // cannot safely represent all int64 values. If we don't normalise `int` fields
+  // back to `number` on read, the consumer sees a string, and common patterns
+  // like `row.counter + 1` become string concatenation (e.g. "0" + 1 = "01"),
+  // silently building a value that eventually overflows BIGINT on re-insert.
+  //
+  // This is exactly the crash that bit OpIndexEcosystem's SlohmMarket.bondCount
+  // after ~20 increments. Regression guard: deserialised int fields must be
+  // JS numbers on any dialect, not strings.
+  it('deserialises int fields as JS number, not string from pg', async () => {
+    adapter.respondWhen(
+      'SELECT * FROM opindex_account WHERE',
+      { id: 'alice', address: '0xa', balance: '0', active: true, txCount: '5', score: 1.5 },
+    );
+    const store = await createStore(schema, adapter);
+    const row = await store.get('Account', 'alice');
+    expect(row).toBeDefined();
+    expect(typeof row!['txCount']).toBe('number');
+    expect(row!['txCount']).toBe(5);
+    // Catches the slohm bug: "5" + 1 === "51" (concat) vs 5 + 1 === 6 (math)
+    expect((row!['txCount'] as number) + 1).toBe(6);
+  });
+
+  it('deserialises float fields as JS number', async () => {
+    adapter.respondWhen(
+      'SELECT * FROM opindex_account WHERE',
+      { id: 'alice', address: '0xa', balance: '0', active: true, txCount: '0', score: '1.5' },
+    );
+    const store = await createStore(schema, adapter);
+    const row = await store.get('Account', 'alice');
+    expect(typeof row!['score']).toBe('number');
+    expect(row!['score']).toBe(1.5);
+  });
+});
+
 describe('Postgres boolean serialisation', () => {
   it('serialises true as JS true, not integer 1', async () => {
     const store = await createStore(schema, adapter);
