@@ -2,6 +2,7 @@
   "name": "@opnet-collective/op-index",
   "version": "0.1.9",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
