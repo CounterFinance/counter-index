@@ -83,3 +83,9 @@ export {
   type TokenMetadata,
 } from './tokens.js';
 
+// --- Address utilities -----------------------------------------------------
+
+export {
+  pubkeyHexToP2op, isP2opAddress, normaliseFromAddress,
+} from './p2op.js';
+

@@ -20,6 +20,7 @@ import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js
 import type { DecodedEvent } from './types.js';
 import type { WsEventSourceOptions } from './wsSource.js';
 import { decodeEvent } from './decoders/eventDecoders.js';
+import { normaliseFromAddress } from './p2op.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -163,10 +164,21 @@ function mapBlocksToEvents(
         }
       }
 
+      // logIndex is per-tx, 0-based — increments across every event in the tx
+      // regardless of filters, so post-filter events have a stable position
+      // within the tx. Mirrors RpcEventSource / DbEventSource behaviour.
+      let logIndex = 0;
+
       for (const ev of tx.events) {
-        if (filters?.eventNames && !filters.eventNames.includes(ev.type)) continue;
+        if (filters?.eventNames && !filters.eventNames.includes(ev.type)) {
+          logIndex++;
+          continue;
+        }
 
         const eventRaw = base64ToUint8Array(ev.data);
+
+        const { address: fromAddress, pubkeyHex: fromAddressPubkey } =
+          normaliseFromAddress(tx.from);
 
         out.push({
           blockNumber,
@@ -176,11 +188,11 @@ function mapBlocksToEvents(
           eventRaw,
           decoded:         decodeEvent(ev.type, eventRaw),
           dataLength:      eventRaw.length,
-          // logIndex is not projected in opstream_getBlockRange RpcEvent
-          logIndex:        undefined,
+          logIndex:        logIndex++,
           blockTimestamp,
           txIndex:         tx.index,
-          fromAddress:     tx.from ?? undefined,
+          fromAddress,
+          fromAddressPubkey,
           gasUsed:         tx.gasUsed      ? hexToBigInt(tx.gasUsed)      : undefined,
           burnedBitcoin:   tx.burnedBitcoin ? hexToBigInt(tx.burnedBitcoin) : undefined,
           failed,
@@ -197,6 +209,8 @@ function mapBlocksToEvents(
 /** Map a WS WebhookEvent to a DecodedEvent (mirrors WsEventSource.toDecodedEvent). */
 function wsEventToDecoded(raw: OpStreamWebhookEvent): DecodedEvent {
   const eventRaw = hexToUint8Array(raw.eventRaw);
+  const { address: fromAddress, pubkeyHex: fromAddressPubkey } =
+    normaliseFromAddress(raw.fromAddress);
   return {
     blockNumber:     raw.blockNumber,
     txHash:          raw.txHash,
@@ -208,7 +222,8 @@ function wsEventToDecoded(raw: OpStreamWebhookEvent): DecodedEvent {
     logIndex:        raw.logIndex,
     blockTimestamp:  raw.blockTimestamp,
     txIndex:         raw.txIndex,
-    fromAddress:     raw.fromAddress ?? undefined,
+    fromAddress,
+    fromAddressPubkey,
     gasUsed:         raw.gasUsed      != null ? BigInt(raw.gasUsed)      : undefined,
     burnedBitcoin:   raw.burnedBitcoin != null ? BigInt(raw.burnedBitcoin) : undefined,
     failed:          raw.failed,

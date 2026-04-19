@@ -178,10 +178,27 @@ describe('RpcEventSource.query', () => {
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
     const events = await source.query(100, 100);
+    // '0xsender' is not a 32-byte hex pubkey — passes through unchanged
     expect(events[0]!.fromAddress).toBe('0xsender');
+    expect(events[0]!.fromAddressPubkey).toBeUndefined();
     expect(events[0]!.gasUsed).toBe(21000n);
     expect(events[0]!.failed).toBe(false);
     expect(events[0]!.blockTimestamp).toBe(1712340000);
+  });
+
+  it('normalises a 32-byte hex pubkey in tx.from to bech32m fromAddress', async () => {
+    const HEX_PUBKEY = '0'.repeat(64);
+    const blocks = new Map([
+      [100, makeBlock(100, [
+        makeTx('tx1', { '0xA': [{ type: 'Evt', data: new Uint8Array(0) }] }, {
+          from: HEX_PUBKEY,
+        }),
+      ])],
+    ]);
+    const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
+    const events = await source.query(100, 100);
+    expect(events[0]!.fromAddress).toMatch(/^op1/);
+    expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
   });
 
   it('populates txEvents with all sibling events in the same tx', async () => {

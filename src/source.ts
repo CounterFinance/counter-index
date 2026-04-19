@@ -15,6 +15,7 @@
 import type { MinimalDbAdapter } from './adapter.js';
 import type { DecodedEvent } from './types.js';
 import { decodeEvent } from './decoders/eventDecoders.js';
+import { normaliseFromAddress } from './p2op.js';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -152,6 +153,8 @@ function rowToEvent(
   // via op-index's DECODER_REGISTRY. Adding a new decoder instantly applies to
   // all historical events without any rewrite of the OpStream archive.
   const decoded = decodeEvent(row.event_name, rawData);
+  const { address: fromAddress, pubkeyHex: fromAddressPubkey } =
+    normaliseFromAddress(row.from_address);
 
   return {
     blockNumber:    row.block_number,
@@ -164,7 +167,8 @@ function rowToEvent(
     logIndex:       row.log_index,
     blockTimestamp: row.block_timestamp ?? undefined,
     txIndex:        row.tx_index ?? undefined,
-    fromAddress:    row.from_address ?? undefined,
+    fromAddress,
+    fromAddressPubkey,
     gasUsed:        row.gas_used != null ? BigInt(row.gas_used) : undefined,
     burnedBitcoin:  row.burned_bitcoin != null ? BigInt(row.burned_bitcoin) : undefined,
     // SQLite stores failed as 0/1 (integer); Postgres returns native boolean.
