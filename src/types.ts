@@ -26,8 +26,14 @@ export interface DecodedEvent {
   logIndex?: number;
   /** Position of the transaction within its block. */
   txIndex?: number;
-  /** Address that submitted the transaction (from_address in OpStream). */
+  /** Address that submitted the transaction as a bech32m P2OP address. */
   fromAddress?: string;
+  /**
+   * Raw 32-byte schnorr pubkey (0x-prefixed hex) when the upstream source
+   * supplies a pubkey rather than a bech32m address. Undefined when
+   * `fromAddress` was already in bech32m form (no pubkey available).
+   */
+  fromAddressPubkey?: string;
   /** Gas consumed by the transaction (satoshi units). */
   gasUsed?: bigint;
   /** Bitcoin burned as fee (satoshi units). */

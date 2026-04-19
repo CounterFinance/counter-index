@@ -20,6 +20,7 @@
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
 import type { DecodedEvent } from './types.js';
 import { decodeEvent } from './decoders/eventDecoders.js';
+import { normaliseFromAddress } from './p2op.js';
 
 // ---------------------------------------------------------------------------
 // OPNET block/transaction shape — duck-typed, no SDK import
@@ -115,6 +116,10 @@ function extractEvents(
     // regardless of which contract emits them — matches OpStream's convention.
     let logIndex = 0;
 
+    // Normalise tx.from once per tx: bech32m address + optional raw pubkey hex.
+    const { address: txFromAddress, pubkeyHex: txFromPubkey } =
+      normaliseFromAddress(tx.from ?? undefined);
+
     for (const [contractAddr, evts] of Object.entries(tx.events)) {
       // Contract filter — keep counter consistent even when skipping
       if (filters?.contract && contractAddr.toLowerCase() !== filters.contract.toLowerCase()) {
@@ -144,7 +149,8 @@ function extractEvents(
           logIndex:        logIndex++,
           txIndex,
           blockTimestamp,
-          fromAddress:     tx.from ?? undefined,
+          fromAddress:       txFromAddress,
+          fromAddressPubkey: txFromPubkey,
           gasUsed:         tx.gasUsed != null ? BigInt(tx.gasUsed) : undefined,
           burnedBitcoin:   tx.burnedBitcoin != null ? BigInt(tx.burnedBitcoin) : undefined,
           failed:          tx.failed,

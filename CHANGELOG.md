@@ -2,6 +2,34 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.9] — 2026-04-19
+
+### Fixed
+
+- **`OpStreamRpcEventSource` now synthesises `logIndex`** — `opstream_getBlockRange`
+  does not project `logIndex` on raw `RpcEvent` entries. Without a counter every
+  event in a tx would land at `logIndex = undefined`, collapsing to the same slot
+  when used as part of a composite entity key (`${txHash}-${logIndex}` → always
+  `${txHash}-0`). A 0-based per-tx counter now mirrors `RpcEventSource` semantics:
+  resets at each tx boundary, increments for every event including filtered-out ones
+  so post-filter events have a stable position.
+
+### Added
+
+- **`fromAddress` is now bech32m P2OP** across all three event sources
+  (`RpcEventSource`, `OpStreamRpcEventSource`, `DbEventSource`). Previously the
+  field forwarded the raw upstream value — a 0x-prefixed 32-byte schnorr pubkey
+  hex — while all decoded event fields (`buyer`, `sender`, etc.) were already in
+  bech32m form. Consumers had to convert manually. All three sources now normalise
+  at the boundary.
+- **`event.fromAddressPubkey?: string`** (new field on `DecodedEvent`) — the original
+  32-byte pubkey hex is preserved here when the source supplied a pubkey. Undefined
+  when `fromAddress` was already a bech32m address (no pubkey available).
+- **`pubkeyHexToP2op`, `isP2opAddress`, `normaliseFromAddress`** exported from the
+  package root — consumers that need P2OP address derivation can reuse the same
+  algorithm instead of copying it.
+- **`bech32` runtime dependency** added (zero-dep, ~2 KB) for bech32m encoding.
+
 ## [0.1.6] — 2026-04-17
 
 ### Fixed

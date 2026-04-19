@@ -1,6 +1,6 @@
 {
   "name": "@opnet-collective/op-index",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
   "type": "module",
   "engines": {
@@ -44,6 +44,7 @@
     "ws": "^8.20.0"
   },
   "dependencies": {
+    "bech32": "^2.0.0",
     "better-sqlite3": "^12.0.0",
     "graphql": "^16.13.2",
     "postgres": "^3.4.9"

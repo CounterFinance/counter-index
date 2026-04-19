@@ -123,10 +123,29 @@ describe('DbEventSource.query', () => {
 
   it('populates fromAddress and gasUsed from transactions JOIN', async () => {
     const events = await source.query(100, 100);
+    // '0xalice' is not a 32-byte hex pubkey — passes through unchanged
     expect(events[0]!.fromAddress).toBe('0xalice');
+    expect(events[0]!.fromAddressPubkey).toBeUndefined();
     expect(events[0]!.gasUsed).toBe(21000n);
     expect(events[0]!.burnedBitcoin).toBe(500n);
     expect(events[0]!.failed).toBe(false);
+  });
+
+  it('normalises a 32-byte hex pubkey from_address to bech32m fromAddress', async () => {
+    // Seed a separate in-memory DB with a 64-char hex pubkey as from_address
+    const db2 = new Database(':memory:');
+    db2.exec(OPSTREAM_SCHEMA);
+    const HEX_PUBKEY = '0'.repeat(64);
+    db2.prepare(`INSERT INTO blocks (block_number, block_hash, timestamp) VALUES (?, ?, ?)`)
+      .run(200, '0xblock200', 1712340100);
+    db2.prepare(`INSERT INTO transactions (tx_hash, block_number, tx_index, from_address, contract_address, gas_used, burned_bitcoin, failed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run('0xtx_pub', 200, 0, HEX_PUBKEY, '0xtoken', '0', '0', 0);
+    db2.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(200, '0xtx_pub', '0xtoken', 'Transferred', 0, new Uint8Array(0), 0);
+    const src2 = new DbEventSource(new SqliteAdapter(db2));
+    const events = await src2.query(200, 200);
+    expect(events[0]!.fromAddress).toMatch(/^op1/);
+    expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
   });
 
   it('populates failed=true and revertReason for failed tx', async () => {
