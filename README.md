@@ -5,17 +5,26 @@ events, persist derived state to SQLite or Postgres, and serve it over a GraphQL
 cursor pagination and live subscriptions — all auto-generated from your schema, zero codegen.
 
 ```
-Local DB ──→ DbEventSource ──→ op-index handlers ──→ opindex_* tables
-  (or OPNET RPC)                                              ↓
-                                                      indexer.serve()
-                                                              ↓
-                                          GraphQL (HTTP + WebSocket) ──→ Frontend
+  OpStream DB --> DbEventSource   ‾‾‾‾‾‾‾‾\
+  OPNET RPC   --> RpcEventSource  ---------+--> on(event, handler) --> opindex_* tables
+  OpStream WS --> OpStreamRpcEventSource _/    onBlock(handler)             |
+                                                                     indexer.serve()
+                                                                            |
+                                                             +--------------+--------------+
+                                                      HTTP /graphql              WebSocket subs
+                                                      GraphiQL playground        (graphql-ws)
 ```
+
+**Start with `RpcEventSource`** — works against any public OPNET node, no extra infrastructure needed:
+- Testnet: `https://testnet.opnet.org`
+- Mainnet: `https://mainnet.opnet.org`
+
+`DbEventSource` and `OpStreamRpcEventSource` require [OpStream](https://github.com/user-attachments/assets/33fa0410-fe7f-4785-9d1d-62118a81dbfb) — currently in private development by the opnet-collective. op-index itself is fully open source and source-agnostic.
 
 ## Requirements
 
 - Node.js >= 24
-- An OpStream-ready database **or** any OPNET RPC node as the event source
+- An OPNET RPC **or** an OpStream-ready database as the event source
 
 ## Install
 
@@ -73,8 +82,8 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 
 ## Roadmap
 
-- [x] `DbEventSource` — index from OpStream-ready SQLite / Postgres
 - [x] `RpcEventSource` — index directly from any OPNET RPC node
+- [x] `DbEventSource` — index from OpStream-ready SQLite / Postgres
 - [x] `WsEventSource` — OpStream WebSocket push (sub-second latency)
 - [x] `createEventSource` — capability-probing DB → WS → RPC fallback factory
 - [x] Block handlers — `indexer.onBlock(handler)`
