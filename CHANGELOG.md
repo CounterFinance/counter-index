@@ -2,6 +2,10 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.10] — 2026-04-19
+
+- docs: improve README architecture diagram + highlight RpcEventSource with public node URLs
+
 ## [0.1.9] — 2026-04-19
 
 ### Fixed
