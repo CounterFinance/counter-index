@@ -307,6 +307,10 @@ export class OpStreamRpcEventSource implements EventSource {
         const events    = mapBlocksToEvents(blocks, filters);
         const elapsedMs = Date.now() - t0;
         this.onChunkFetched?.({ fromBlock, toBlock: chunkEnd, events: events.length, elapsedMs });
+        if (chunkEnd < toBlock) {
+          const remaining = await this.fetchChunk(chunkEnd + 1, toBlock, filters);
+          return [...events, ...remaining];
+        }
         return events;
 
       } catch (err: unknown) {
