@@ -210,7 +210,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     const t0 = Date.now();
     await config.sink.transaction(async () => {
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
-      await store.writeBlockCheckpoint(blockNumber, tipBlock);
+      await store.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp);
     });
     return Date.now() - t0;
   }
@@ -346,6 +346,14 @@ export async function createIndexer<S extends SchemaDefinition>(
         const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
         log.debug('indexer', 'block processed', {
           block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+        });
+      }
+
+      // Advance checkpoint to the scan boundary even when the last N blocks had
+      // no matching events — ensures _meta.block.number means "scanned up to here".
+      if (currentBlock !== toBlock) {
+        await config.sink.transaction(async () => {
+          await store.writeBlockCheckpoint(toBlock, undefined, currentTimestamp);
         });
       }
 

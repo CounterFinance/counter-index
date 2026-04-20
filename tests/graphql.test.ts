@@ -709,40 +709,56 @@ describe('_meta field', () => {
     expect(result.data!['_meta']).toBeNull();
   });
 
-  it('returns block.number after writeBlockCheckpoint', async () => {
+  it('returns block.number and timestamp after writeBlockCheckpoint', async () => {
     const adapter = createTestAdapter();
     const store = await makeStore(adapter);
     await adapter.transaction(async () => {
-      await store.writeBlockCheckpoint(42);
+      await store.writeBlockCheckpoint(42, undefined, 1700000000);
     });
     const gql = buildGraphQLSchema(schema, store);
     const result = await graphql({
       schema: gql,
-      source: '{ _meta { block { number } tipBlock blocksBehind hasIndexingErrors } }',
+      source: '{ _meta { block { number timestamp } tipBlock blocksBehind hasIndexingErrors synced } }',
     });
     expect(result.errors).toBeUndefined();
     const meta = result.data!['_meta'] as Record<string, unknown>;
-    expect(meta['block']).toMatchObject({ number: 42 });
+    expect(meta['block']).toMatchObject({ number: 42, timestamp: 1700000000 });
     expect(meta['tipBlock']).toBeNull();
     expect(meta['blocksBehind']).toBeNull();
     expect(meta['hasIndexingErrors']).toBe(false);
+    expect(meta['synced']).toBe(true); // null tipBlock → synced
   });
 
-  it('computes blocksBehind when tipBlock is set', async () => {
+  it('computes blocksBehind and synced when tipBlock is set', async () => {
     const adapter = createTestAdapter();
     const store = await makeStore(adapter);
     await adapter.transaction(async () => {
-      await store.writeBlockCheckpoint(100, 200);
+      await store.writeBlockCheckpoint(100, 200, 1700000100);
     });
     const gql = buildGraphQLSchema(schema, store);
     const result = await graphql({
       schema: gql,
-      source: '{ _meta { block { number } tipBlock blocksBehind } }',
+      source: '{ _meta { block { number timestamp } tipBlock blocksBehind synced } }',
     });
     expect(result.errors).toBeUndefined();
     const meta = result.data!['_meta'] as Record<string, unknown>;
-    expect(meta['block']).toMatchObject({ number: 100 });
+    expect(meta['block']).toMatchObject({ number: 100, timestamp: 1700000100 });
     expect(meta['tipBlock']).toBe(200);
     expect(meta['blocksBehind']).toBe(100);
+    expect(meta['synced']).toBe(false);
+  });
+
+  it('synced is true when blocksBehind is 0', async () => {
+    const adapter = createTestAdapter();
+    const store = await makeStore(adapter);
+    await adapter.transaction(async () => {
+      await store.writeBlockCheckpoint(200, 200);
+    });
+    const gql = buildGraphQLSchema(schema, store);
+    const result = await graphql({ schema: gql, source: '{ _meta { synced blocksBehind } }' });
+    expect(result.errors).toBeUndefined();
+    const meta = result.data!['_meta'] as Record<string, unknown>;
+    expect(meta['blocksBehind']).toBe(0);
+    expect(meta['synced']).toBe(true);
   });
 });

@@ -69,13 +69,13 @@ export interface EntityStore {
    * opindex_meta.last_block only advances when every entity write for the block
    * has committed — making the meta value safe to resume from.
    */
-  writeBlockCheckpoint(blockNumber: number, tipBlock?: number): Promise<void>;
+  writeBlockCheckpoint(blockNumber: number, tipBlock?: number, blockTimestamp?: number): Promise<void>;
 
   /**
    * Read the current indexed checkpoint from opindex_meta.
    * Returns undefined if no block has been checkpointed yet.
    */
-  readCheckpoint(): Promise<{ lastBlock: number; tipBlock?: number } | undefined>;
+  readCheckpoint(): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,12 +248,19 @@ export async function createStore(
   const intType = dialect === 'postgres' ? 'BIGINT' : 'INTEGER';
   await adapter.exec(`
     CREATE TABLE IF NOT EXISTS opindex_meta (
-      id          TEXT     NOT NULL PRIMARY KEY,
-      last_block  ${intType} NOT NULL,
-      tip_block   ${intType},
-      updated_at  ${intType} NOT NULL
+      id             TEXT     NOT NULL PRIMARY KEY,
+      last_block     ${intType} NOT NULL,
+      tip_block      ${intType},
+      last_block_ts  ${intType},
+      updated_at     ${intType} NOT NULL
     )
   `);
+  // Migration for existing tables that predate the last_block_ts column.
+  try {
+    await adapter.exec(`ALTER TABLE opindex_meta ADD COLUMN last_block_ts ${intType}`);
+  } catch {
+    // Column already exists — safe to ignore.
+  }
 
   function assertKnown(entity: string): EntityDef {
     return schema.getEntity(entity); // throws if unknown
@@ -374,35 +381,37 @@ export async function createStore(
       return () => { changeHandlers.delete(handler); };
     },
 
-    async writeBlockCheckpoint(blockNumber, tipBlock) {
+    async writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp) {
       const now = Date.now();
       if (dialect === 'sqlite') {
         await adapter.run(
-          `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, updated_at) VALUES (?, ?, ?, ?)`,
-          ['singleton', blockNumber, tipBlock ?? null, now],
+          `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
+          ['singleton', blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
         );
       } else {
         await adapter.run(
-          `INSERT INTO opindex_meta (id, last_block, tip_block, updated_at)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (id) DO UPDATE SET
-             last_block = EXCLUDED.last_block,
-             tip_block  = EXCLUDED.tip_block,
-             updated_at = EXCLUDED.updated_at`,
-          ['singleton', blockNumber, tipBlock ?? null, now],
+             last_block    = EXCLUDED.last_block,
+             tip_block     = EXCLUDED.tip_block,
+             last_block_ts = EXCLUDED.last_block_ts,
+             updated_at    = EXCLUDED.updated_at`,
+          ['singleton', blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
         );
       }
     },
 
     async readCheckpoint() {
-      const row = await adapter.get<{ last_block: number; tip_block: number | null }>(
-        `SELECT last_block, tip_block FROM opindex_meta WHERE id = ${param(dialect, 1)}`,
+      const row = await adapter.get<{ last_block: number; tip_block: number | null; last_block_ts: number | null }>(
+        `SELECT last_block, tip_block, last_block_ts FROM opindex_meta WHERE id = ${param(dialect, 1)}`,
         ['singleton'],
       );
       if (!row) return undefined;
       return {
-        lastBlock: row.last_block,
-        tipBlock:  row.tip_block ?? undefined,
+        lastBlock:   row.last_block,
+        tipBlock:    row.tip_block    ?? undefined,
+        lastBlockTs: row.last_block_ts ?? undefined,
       };
     },
   };

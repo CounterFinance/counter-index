@@ -485,10 +485,11 @@ export function buildGraphQLSchema(
   const IndexerMetaType = new GraphQLObjectType({
     name: '_IndexerMeta',
     fields: {
-      block:            { type: new GraphQLNonNull(IndexerBlockType) },
-      tipBlock:         { type: GraphQLInt },
-      blocksBehind:     { type: GraphQLInt },
+      block:             { type: new GraphQLNonNull(IndexerBlockType) },
+      tipBlock:          { type: GraphQLInt },
+      blocksBehind:      { type: GraphQLInt },
       hasIndexingErrors: { type: new GraphQLNonNull(GraphQLBoolean) },
+      synced:            { type: new GraphQLNonNull(GraphQLBoolean) },
     },
   });
 
@@ -497,11 +498,13 @@ export function buildGraphQLSchema(
     resolve: async () => {
       const cp = await store.readCheckpoint();
       if (!cp) return null;
+      const blocksBehind = cp.tipBlock != null ? cp.tipBlock - cp.lastBlock : null;
       return {
-        block:             { number: cp.lastBlock, timestamp: null },
+        block:             { number: cp.lastBlock, timestamp: cp.lastBlockTs ?? null },
         tipBlock:          cp.tipBlock ?? null,
-        blocksBehind:      cp.tipBlock != null ? cp.tipBlock - cp.lastBlock : null,
+        blocksBehind,
         hasIndexingErrors: false,
+        synced:            blocksBehind === null || blocksBehind === 0,
       };
     },
   };

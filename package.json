@@ -1,6 +1,6 @@
 {
   "name": "@opnet-collective/op-index",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
   "license": "MIT",
   "type": "module",
