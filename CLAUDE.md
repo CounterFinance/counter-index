@@ -12,15 +12,23 @@ MUST follow for all code changes:
 2. **Make focused commits** on the branch. Multiple commits per branch is fine and encouraged.
 3. **Open a PR targeting `dev`** using the PR template. Always add one semver label:
    - `semver:major` — breaking API change or major milestone (bumps X.y.z)
-   - `semver:minor` — meaningful new capability or consequent improvement (bumps x.Y.z)
-   - `semver:patch` — small feature, fix, chore, refactor, docs (bumps x.y.Z)
+   - `semver:minor` — meaningful stable milestone (bumps x.Y.z)
+   - `semver:patch` — default for everything else (bumps x.y.Z)
 4. **`dev → main` is the release PR** — merging to `main` triggers the version bump, CHANGELOG update, and git tag. npm publish is handled manually after.
 5. **Never commit directly to `main` or `dev`** unless the user explicitly says so.
 
 Semver guide for this project:
-- **Z (patch)** — the default. Small features, small fixes, docs, chores, any general commit.
-- **Y (minor)** — meaningful new capability or consequent improvement. Use judgment.
-- **X (major)** — breaking change to the public API surface (exported types, event shapes, source interfaces).
+- **Default publishing flow** — use prerelease alpha tags for all iterative work:
+  ```
+  npm version 0.1.12-alpha.1 && npm publish --tag alpha
+  npm version 0.1.12-alpha.2 && npm publish --tag alpha
+  # stable milestone:
+  npm version 0.1.12 && npm publish
+  ```
+- **Z-alpha (0.0.Z-alpha.N)** — the default. Any fix, feature, breaking change, refactor. Publish with `--tag alpha`.
+- **Z stable (0.0.Z)** — only when explicitly blessed as stable. Publish with `npm publish` (→ `latest`).
+- **Y (minor)** — meaningful stable milestone. Requires explicit user approval.
+- **X (major)** — stays at 0 for the foreseeable future. Do not bump.
 
 ## Tech stack
 
