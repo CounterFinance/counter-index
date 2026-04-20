@@ -99,6 +99,8 @@ export interface Indexer {
     fromBlock: number,
     toBlock: number,
     filters?: EventSourceFilters,
+    /** Known chain tip — written to opindex_meta so _meta.synced reflects real catch-up state. */
+    knownTip?: number,
   ): Promise<IndexerStats>;
 
   /**
@@ -281,7 +283,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       });
     },
 
-    async sync(fromBlock, toBlock, filters) {
+    async sync(fromBlock, toBlock, filters, knownTip) {
       const source = requireSource();
       const syncStart  = Date.now();
 
@@ -310,7 +312,7 @@ export async function createIndexer<S extends SchemaDefinition>(
 
       for await (const event of source.queryStream(fromBlock, toBlock, filters)) {
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+          const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp, knownTip);
           log.debug('indexer', 'block processed', {
             block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
           });
@@ -320,11 +322,11 @@ export async function createIndexer<S extends SchemaDefinition>(
           if (now - lastProgressAt >= 5_000) {
             const elapsed   = (now - lastProgressAt) / 1_000;
             const blkDelta  = currentBlock - progressBlock;
-            const behind    = toBlock - currentBlock;
+            const behind    = knownTip != null ? knownTip - currentBlock : toBlock - currentBlock;
             const eta       = blkDelta > 0 ? Math.round(behind / (blkDelta / elapsed)) : null;
             log.info('indexer', 'progress', {
               block:          currentBlock,
-              tip:            toBlock,
+              tip:            knownTip ?? toBlock,
               behind,
               blocks_per_sec: Number((blkDelta / elapsed).toFixed(1)),
               events_per_sec: Number((progressEvents / elapsed).toFixed(1)),
@@ -343,7 +345,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       }
 
       if (currentBlock !== -1) {
-        const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+        const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp, knownTip);
         log.debug('indexer', 'block processed', {
           block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
         });
@@ -353,7 +355,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       // no matching events — ensures _meta.block.number means "scanned up to here".
       if (currentBlock !== toBlock) {
         await config.sink.transaction(async () => {
-          await store.writeBlockCheckpoint(toBlock, undefined, currentTimestamp);
+          await store.writeBlockCheckpoint(toBlock, knownTip, currentTimestamp);
         });
       }
 
@@ -384,7 +386,9 @@ export async function createIndexer<S extends SchemaDefinition>(
         fromBlock,
         async (event) => {
           if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
-            const elapsedMs = await dispatchBlock(lastBlock, lastTimestamp);
+            // In live mode, the block we just finished IS effectively our tip — no backlog.
+            // Passing lastBlock as tipBlock keeps blocksBehind=0 and synced=true.
+            const elapsedMs = await dispatchBlock(lastBlock, lastTimestamp, lastBlock);
             // INFO: live-mode heartbeat. At ~1 block / 10s this is ~6 lines/min,
             // giving a clear "still alive" signal without flooding logs.
             log.info('indexer', 'live block', {

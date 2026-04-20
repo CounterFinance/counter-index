@@ -2,6 +2,65 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.12] — 2026-04-20
+
+### Added
+
+- **Streaming `queryStream()` replaces `query()`** — `EventSource` interface now exposes
+  `queryStream(fromBlock, toBlock, filters): AsyncIterable<DecodedEvent>` instead of
+  `query(): Promise<DecodedEvent[]>`. All three sources (`OpStreamRpcEventSource`,
+  `RpcEventSource`, `DbEventSource`) stream events one by one; peak memory is bounded
+  by a single chunk rather than the entire block range. Fixes OOM on dense chains with
+  large `sync()` windows.
+
+- **Per-block transactional writes** — `store.beginBlock()` / `store.commitBlock()` coalesce
+  all entity writes for one block into a single `BEGIN … COMMIT`. Writes are only visible
+  after the full block commits — no partial-block state is ever queryable.
+
+- **`_meta` GraphQL field** — a `_meta` root query field exposes indexer progress:
+  ```graphql
+  { _meta { block { number timestamp } tipBlock blocksBehind synced hasIndexingErrors } }
+  ```
+  - `block.number` — last fully committed block (every entity ≤ this block is durable).
+  - `tipBlock` — chain tip at last sync, written atomically with each block's entities.
+  - `blocksBehind` — `tipBlock - block.number`; null if tip is unknown.
+  - `synced` — `true` when `blocksBehind === 0` (live) or tip is unknown; `false` during
+    active backfill. Use this to distinguish **backfilling** from **live** mode at a glance.
+  - `hasIndexingErrors` — always `false` for now; reserved for handler-error tracking.
+
+- **`opindex_meta` checkpoint table** — persisted atomically with block writes. On restart
+  the indexer resumes from `opindex_meta.last_block + 1` automatically.
+
+- **`IndexerLogger` interface** — five-level logger (`trace`/`debug`/`info`/`warn`/`error`)
+  injectable via `createIndexer({ logger })`. Defaults to a no-op logger so existing
+  consumers are unaffected. `op-index` emits no `console.log` itself; all output is
+  routed through the injected logger.
+
+- **`sync()` `knownTip` parameter** — `sync(from, to, filters?, knownTip?)` accepts the
+  chain tip so `_meta.tipBlock` and `_meta.synced` reflect real catch-up state during
+  multi-window backfills (not just the current window's `toBlock`).
+
+- **Range-end checkpoint** — `sync()` writes a checkpoint to `toBlock` even when the last
+  N blocks had no matching events, so `_meta.block.number` always means "scanned up to
+  here", not "last block with a matching event".
+
+- **`block.timestamp` in `_meta`** — `_meta.block.timestamp` is the Unix-ms timestamp of
+  the last committed block when the source provides it (OpStream sources do; pure RPC does
+  not — returns `null`).
+
+### Changed
+
+- **`EventSource.query()` removed** — replaced by `queryStream()`. Any custom `EventSource`
+  implementation must migrate to the new async-iterable interface.
+
+### Fixed
+
+- **`opindex_meta` integer overflow on Postgres** — `updated_at` and `last_block_ts` now
+  use `BIGINT` instead of `INTEGER`. `Date.now()` (~1.78 × 10¹² in 2026) overflows
+  Postgres `int4` (~2.1 × 10⁹).
+- **Postgres `NOTICE` spam** — `openPostgres()` now sets `onnotice: () => {}` to suppress
+  the `CREATE TABLE IF NOT EXISTS` NOTICE objects that were cluttering stdout.
+
 ## [0.1.10] — 2026-04-19
 
 - docs: improve README architecture diagram + highlight RpcEventSource with public node URLs

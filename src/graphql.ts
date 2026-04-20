@@ -498,7 +498,10 @@ export function buildGraphQLSchema(
     resolve: async () => {
       const cp = await store.readCheckpoint();
       if (!cp) return null;
-      const blocksBehind = cp.tipBlock != null ? cp.tipBlock - cp.lastBlock : null;
+      // Clamp to 0: tipBlock can be stale (set during backfill) while lastBlock advances
+      // in live mode — never surface a negative value to consumers.
+      const rawBehind   = cp.tipBlock != null ? cp.tipBlock - cp.lastBlock : null;
+      const blocksBehind = rawBehind != null ? Math.max(0, rawBehind) : null;
       return {
         block:             { number: cp.lastBlock, timestamp: cp.lastBlockTs ?? null },
         tipBlock:          cp.tipBlock ?? null,
