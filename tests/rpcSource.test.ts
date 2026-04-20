@@ -6,6 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RpcEventSource, type BlockLike, type BlockProvider } from '../src/rpcSource.js';
 import { registerDecoder } from '../src/decoders/eventDecoders.js';
 
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of iter) out.push(item);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -54,7 +60,7 @@ describe('RpcEventSource.query', () => {
       [101, makeBlock(101, [makeTx('tx2', { '0xB': [{ type: 'Evt', data: new Uint8Array(0) }] })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 101);
+    const events = await collect(source.queryStream(100, 101));
     expect(events).toHaveLength(2);
     expect(events[0]!.blockNumber).toBe(100);
     expect(events[1]!.blockNumber).toBe(101);
@@ -63,7 +69,7 @@ describe('RpcEventSource.query', () => {
   it('returns empty array when range has no events', async () => {
     const blocks = new Map([[100, makeBlock(100, [])]]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events).toHaveLength(0);
   });
 
@@ -75,7 +81,7 @@ describe('RpcEventSource.query', () => {
       ])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events).toHaveLength(1);
     expect(events[0]!.txHash).toBe('tx2');
   });
@@ -86,7 +92,7 @@ describe('RpcEventSource.query', () => {
     ]);
     // block 100 not in map → provider returns null
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 101);
+    const events = await collect(source.queryStream(100, 101));
     expect(events).toHaveLength(1);
     expect(events[0]!.blockNumber).toBe(101);
   });
@@ -99,7 +105,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100, { contract: '0xaaa' });
+    const events = await collect(source.queryStream(100, 100, { contract: '0xaaa' }));
     expect(events).toHaveLength(1);
     expect(events[0]!.contractAddress).toBe('0xAAA');
   });
@@ -114,7 +120,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100, { eventNames: ['Approval'] });
+    const events = await collect(source.queryStream(100, 100, { eventNames: ['Approval'] }));
     expect(events).toHaveLength(1);
     expect(events[0]!.eventName).toBe('Approval');
   });
@@ -132,7 +138,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events[0]!.logIndex).toBe(0);
     expect(events[1]!.logIndex).toBe(1);
     expect(events[2]!.logIndex).toBe(2);
@@ -151,7 +157,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100, { contract: '0xKeep' });
+    const events = await collect(source.queryStream(100, 100, { contract: '0xKeep' }));
     expect(events).toHaveLength(1);
     expect(events[0]!.logIndex).toBe(2); // 0xSkip used indices 0 and 1
   });
@@ -164,7 +170,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events[0]!.decoded).toEqual({ field: 'decoded-value' });
   });
 
@@ -177,7 +183,7 @@ describe('RpcEventSource.query', () => {
       ], 1712340000)],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     // '0xsender' is not a 32-byte hex pubkey — passes through unchanged
     expect(events[0]!.fromAddress).toBe('0xsender');
     expect(events[0]!.fromAddressPubkey).toBeUndefined();
@@ -196,7 +202,7 @@ describe('RpcEventSource.query', () => {
       ])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events[0]!.fromAddress).toMatch(/^op1/);
     expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
   });
@@ -215,7 +221,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events).toHaveLength(2);
     for (const e of events) {
       expect(e.txEvents).toBeDefined();
@@ -236,7 +242,7 @@ describe('RpcEventSource.query', () => {
       })])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100, { eventNames: ['SwapExecuted'] });
+    const events = await collect(source.queryStream(100, 100, { eventNames: ['SwapExecuted'] }));
     expect(events).toHaveLength(1);
     // Even though we filtered to SwapExecuted only, txEvents still contains Transferred
     expect(events[0]!.txEvents!.get(TOKEN)?.[0]?.type).toBe('Transferred');
@@ -250,7 +256,7 @@ describe('RpcEventSource.query', () => {
       ])],
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events).toHaveLength(2);
     expect(events[0]!.txEvents).not.toBe(events[1]!.txEvents);
     expect(events[0]!.txEvents!.has('0xA')).toBe(true);
@@ -266,7 +272,7 @@ describe('RpcEventSource.query', () => {
       getBlockNumber: async () => 100n,
     };
     const source = new RpcEventSource(failProvider, { maxRetries: 2, retryDelayMs: 0, rpsLimit: 1000 });
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events).toHaveLength(0);    // block skipped
     expect(calls).toBe(2);            // retried exactly maxRetries times
   });

@@ -472,6 +472,40 @@ export function buildGraphQLSchema(
     }
   }
 
+  // ── _meta: TheGraph-compatible indexed-block checkpoint ────────────────────
+
+  const IndexerBlockType = new GraphQLObjectType({
+    name: '_IndexerBlock',
+    fields: {
+      number:    { type: new GraphQLNonNull(GraphQLInt) },
+      timestamp: { type: GraphQLInt },
+    },
+  });
+
+  const IndexerMetaType = new GraphQLObjectType({
+    name: '_IndexerMeta',
+    fields: {
+      block:            { type: new GraphQLNonNull(IndexerBlockType) },
+      tipBlock:         { type: GraphQLInt },
+      blocksBehind:     { type: GraphQLInt },
+      hasIndexingErrors: { type: new GraphQLNonNull(GraphQLBoolean) },
+    },
+  });
+
+  queryFields['_meta'] = {
+    type: IndexerMetaType,
+    resolve: async () => {
+      const cp = await store.readCheckpoint();
+      if (!cp) return null;
+      return {
+        block:             { number: cp.lastBlock, timestamp: null },
+        tipBlock:          cp.tipBlock ?? null,
+        blocksBehind:      cp.tipBlock != null ? cp.tipBlock - cp.lastBlock : null,
+        hasIndexingErrors: false,
+      };
+    },
+  };
+
   return new GraphQLSchema({
     query: new GraphQLObjectType({ name: 'Query', fields: queryFields }),
     ...(options.subscriptions && Object.keys(subscriptionFields).length > 0

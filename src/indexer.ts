@@ -27,6 +27,7 @@ import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerCont
 import { decodeEvent } from './decoders/eventDecoders.js';
 import type { DecodedEvent } from './types.js';
 import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type ServeOptions, type ServeHandle } from './graphql.js';
+import { noopLogger, type IndexerLogger } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,6 +39,8 @@ export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   sink: MinimalDbAdapter;
   /** Source — where raw chain events are read from. Required for sync() and subscribe(). */
   source?: EventSource;
+  /** Optional logger. Defaults to a no-op logger. */
+  logger?: IndexerLogger;
 }
 
 export interface IndexerStats {
@@ -144,6 +147,7 @@ export async function createIndexer<S extends SchemaDefinition>(
 ): Promise<Indexer> {
   const store = await createStore(config.schema, config.sink);
   const registry = new HandlerRegistry();
+  const log = config.logger ?? noopLogger;
   let stats: IndexerStats = {
     eventsProcessed: 0,
     eventsDecoded: 0,
@@ -177,9 +181,23 @@ export async function createIndexer<S extends SchemaDefinition>(
     await registry.dispatch(event, makeContext(event));
   }
 
-  async function dispatchBlock(blockNumber: number, blockTimestamp: number | undefined): Promise<void> {
+  async function dispatchBlock(
+    blockNumber: number,
+    blockTimestamp: number | undefined,
+    eventsInBlock: number,
+    tipBlock?: number,
+  ): Promise<void> {
     stats.blocksProcessed++;
-    await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
+    const t0 = Date.now();
+    await config.sink.transaction(async () => {
+      await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
+      await store.writeBlockCheckpoint(blockNumber, tipBlock);
+    });
+    log.info('indexer', 'block processed', {
+      block:           blockNumber,
+      events_in_block: eventsInBlock,
+      elapsed_ms:      Date.now() - t0,
+    });
   }
 
   function requireSource(): EventSource {
@@ -207,18 +225,21 @@ export async function createIndexer<S extends SchemaDefinition>(
     async processEvents(events) {
       let currentBlock = -1;
       let currentTimestamp: number | undefined;
+      let eventsInBlock = 0;
 
       for (const event of events) {
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          await dispatchBlock(currentBlock, currentTimestamp);
+          await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
+          eventsInBlock = 0;
         }
         currentBlock     = event.blockNumber;
         currentTimestamp = event.blockTimestamp;
+        eventsInBlock++;
         await dispatch(event);
       }
 
       if (currentBlock !== -1) {
-        await dispatchBlock(currentBlock, currentTimestamp);
+        await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
       }
     },
 
@@ -241,25 +262,65 @@ export async function createIndexer<S extends SchemaDefinition>(
 
     async sync(fromBlock, toBlock, filters) {
       const source = requireSource();
-      const events = await source.query(fromBlock, toBlock, filters);
-
+      const syncStart  = Date.now();
       let currentBlock = -1;
       let currentTimestamp: number | undefined;
+      let eventsInBlock = 0;
 
-      for (const event of events) {
-        // Block boundary — fire block handlers for the completed block
+      // Progress ticker — emit a log line every 5 seconds during long syncs
+      let lastProgressAt = Date.now();
+      let progressBlock  = fromBlock;
+      let progressEvents = 0;
+
+      for await (const event of source.queryStream(fromBlock, toBlock, filters)) {
+        // Block boundary — flush completed block before moving to the next
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          await dispatchBlock(currentBlock, currentTimestamp);
+          await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
+          eventsInBlock = 0;
+
+          const now = Date.now();
+          if (now - lastProgressAt >= 5_000) {
+            const elapsed    = (now - lastProgressAt) / 1_000;
+            const blkDelta   = currentBlock - progressBlock;
+            const blkPerSec  = (blkDelta / elapsed).toFixed(1);
+            const behind     = toBlock - currentBlock;
+            const eta        = blkDelta > 0
+              ? Math.round(behind / (blkDelta / elapsed))
+              : null;
+            log.info('indexer', 'progress', {
+              block:         currentBlock,
+              tip:           toBlock,
+              behind,
+              blocks_per_sec: blkPerSec,
+              events_per_sec: ((progressEvents) / elapsed).toFixed(1),
+              eta_sec:        eta,
+            });
+            lastProgressAt = now;
+            progressBlock  = currentBlock;
+            progressEvents = 0;
+          }
         }
-        currentBlock    = event.blockNumber;
+        currentBlock     = event.blockNumber;
         currentTimestamp = event.blockTimestamp;
+        eventsInBlock++;
+        progressEvents++;
         await dispatch(event);
       }
 
-      // Fire block handler for the final block
+      // Flush the final block
       if (currentBlock !== -1) {
-        await dispatchBlock(currentBlock, currentTimestamp);
+        await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
       }
+
+      const elapsedMs = Date.now() - syncStart;
+      log.info('indexer', 'sync complete', {
+        from:       fromBlock,
+        to:         toBlock,
+        blocks:     toBlock - fromBlock + 1,
+        events:     stats.eventsProcessed,
+        elapsed_ms: elapsedMs,
+        blocks_per_sec: ((toBlock - fromBlock + 1) / (elapsedMs / 1_000)).toFixed(1),
+      });
 
       return { ...stats };
     },
@@ -271,14 +332,17 @@ export async function createIndexer<S extends SchemaDefinition>(
       let lastBlock     = -1;
       let lastTimestamp: number | undefined;
 
+      let eventsInBlock = 0;
       return source.subscribe(
         fromBlock,
         async (event) => {
           if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
-            await dispatchBlock(lastBlock, lastTimestamp);
+            await dispatchBlock(lastBlock, lastTimestamp, eventsInBlock);
+            eventsInBlock = 0;
           }
           lastBlock     = event.blockNumber;
           lastTimestamp = event.blockTimestamp;
+          eventsInBlock++;
           await dispatch(event);
         },
         { pollIntervalMs: options?.pollIntervalMs },

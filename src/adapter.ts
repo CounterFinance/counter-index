@@ -132,18 +132,25 @@ export function createTestAdapter(): SqliteAdapter {
  */
 export class PostgresAdapter implements MinimalDbAdapter {
   readonly dialect = 'postgres' as const;
+  // Holds the transaction-scoped sql connection when inside adapter.transaction().
+  // All operations use this instead of the pool so they join the open transaction.
+  private txSql: Sql | null = null;
 
   constructor(private readonly sql: Sql) {}
 
+  private get activeSql(): Sql {
+    return this.txSql ?? this.sql;
+  }
+
   async run(sql: string, params: unknown[] = []): Promise<void> {
-    await this.sql.unsafe(sql, params as never[]);
+    await this.activeSql.unsafe(sql, params as never[]);
   }
 
   async get<T = Record<string, unknown>>(
     sql: string,
     params: unknown[] = [],
   ): Promise<T | undefined> {
-    const rows = await this.sql.unsafe(sql, params as never[]);
+    const rows = await this.activeSql.unsafe(sql, params as never[]);
     return rows[0] as T | undefined;
   }
 
@@ -151,16 +158,23 @@ export class PostgresAdapter implements MinimalDbAdapter {
     sql: string,
     params: unknown[] = [],
   ): Promise<T[]> {
-    const rows = await this.sql.unsafe(sql, params as never[]);
+    const rows = await this.activeSql.unsafe(sql, params as never[]);
     return rows as unknown as T[];
   }
 
   async exec(sql: string): Promise<void> {
-    await this.sql.unsafe(sql);
+    await this.activeSql.unsafe(sql);
   }
 
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
-    return this.sql.begin(async () => fn()) as Promise<T>;
+    return this.sql.begin(async (txSql) => {
+      this.txSql = txSql as unknown as Sql;
+      try {
+        return await fn();
+      } finally {
+        this.txSql = null;
+      }
+    }) as Promise<T>;
   }
 
   /** Close the underlying connection pool. Call on graceful shutdown. */

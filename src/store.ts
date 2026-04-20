@@ -60,6 +60,21 @@ export interface EntityStore {
    * (or null for deletes). Returns an unsubscribe function.
    */
   onChange(handler: (event: StoreChangeEvent) => void): () => void;
+
+  /**
+   * Write or advance the indexed checkpoint for this block.
+   * MUST be called as the LAST operation inside the same adapter.transaction()
+   * that wraps all entity writes for the block. This guarantees that
+   * opindex_meta.last_block only advances when every entity write for the block
+   * has committed — making the meta value safe to resume from.
+   */
+  writeBlockCheckpoint(blockNumber: number, tipBlock?: number): Promise<void>;
+
+  /**
+   * Read the current indexed checkpoint from opindex_meta.
+   * Returns undefined if no block has been checkpointed yet.
+   */
+  readCheckpoint(): Promise<{ lastBlock: number; tipBlock?: number } | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +239,17 @@ export async function createStore(
     await adapter.exec(ddl);
   }
 
+  // Indexed-block checkpoint — one singleton row, updated atomically with
+  // entity writes at the end of each block's transaction.
+  await adapter.exec(`
+    CREATE TABLE IF NOT EXISTS opindex_meta (
+      id          TEXT    NOT NULL PRIMARY KEY,
+      last_block  INTEGER NOT NULL,
+      tip_block   INTEGER,
+      updated_at  INTEGER NOT NULL
+    )
+  `);
+
   function assertKnown(entity: string): EntityDef {
     return schema.getEntity(entity); // throws if unknown
   }
@@ -335,6 +361,38 @@ export async function createStore(
     onChange(handler) {
       changeHandlers.add(handler);
       return () => { changeHandlers.delete(handler); };
+    },
+
+    async writeBlockCheckpoint(blockNumber, tipBlock) {
+      const now = Date.now();
+      if (dialect === 'sqlite') {
+        await adapter.run(
+          `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, updated_at) VALUES (?, ?, ?, ?)`,
+          ['singleton', blockNumber, tipBlock ?? null, now],
+        );
+      } else {
+        await adapter.run(
+          `INSERT INTO opindex_meta (id, last_block, tip_block, updated_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (id) DO UPDATE SET
+             last_block = EXCLUDED.last_block,
+             tip_block  = EXCLUDED.tip_block,
+             updated_at = EXCLUDED.updated_at`,
+          ['singleton', blockNumber, tipBlock ?? null, now],
+        );
+      }
+    },
+
+    async readCheckpoint() {
+      const row = await adapter.get<{ last_block: number; tip_block: number | null }>(
+        `SELECT last_block, tip_block FROM opindex_meta WHERE id = ${param(dialect, 1)}`,
+        ['singleton'],
+      );
+      if (!row) return undefined;
+      return {
+        lastBlock: row.last_block,
+        tipBlock:  row.tip_block ?? undefined,
+      };
     },
   };
 }
