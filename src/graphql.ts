@@ -472,6 +472,46 @@ export function buildGraphQLSchema(
     }
   }
 
+  // ── _meta: TheGraph-compatible indexed-block checkpoint ────────────────────
+
+  const IndexerBlockType = new GraphQLObjectType({
+    name: '_IndexerBlock',
+    fields: {
+      number:    { type: new GraphQLNonNull(GraphQLInt) },
+      timestamp: { type: GraphQLInt },
+    },
+  });
+
+  const IndexerMetaType = new GraphQLObjectType({
+    name: '_IndexerMeta',
+    fields: {
+      block:             { type: new GraphQLNonNull(IndexerBlockType) },
+      tipBlock:          { type: GraphQLInt },
+      blocksBehind:      { type: GraphQLInt },
+      hasIndexingErrors: { type: new GraphQLNonNull(GraphQLBoolean) },
+      synced:            { type: new GraphQLNonNull(GraphQLBoolean) },
+    },
+  });
+
+  queryFields['_meta'] = {
+    type: IndexerMetaType,
+    resolve: async () => {
+      const cp = await store.readCheckpoint();
+      if (!cp) return null;
+      // Clamp to 0: tipBlock can be stale (set during backfill) while lastBlock advances
+      // in live mode — never surface a negative value to consumers.
+      const rawBehind   = cp.tipBlock != null ? cp.tipBlock - cp.lastBlock : null;
+      const blocksBehind = rawBehind != null ? Math.max(0, rawBehind) : null;
+      return {
+        block:             { number: cp.lastBlock, timestamp: cp.lastBlockTs ?? null },
+        tipBlock:          cp.tipBlock ?? null,
+        blocksBehind,
+        hasIndexingErrors: false,
+        synced:            blocksBehind === null || blocksBehind === 0,
+      };
+    },
+  };
+
   return new GraphQLSchema({
     query: new GraphQLObjectType({ name: 'Query', fields: queryFields }),
     ...(options.subscriptions && Object.keys(subscriptionFields).length > 0

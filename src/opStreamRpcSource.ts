@@ -345,39 +345,24 @@ export class OpStreamRpcEventSource implements EventSource {
     throw new Error(`[OpStreamRpc] could not satisfy server limits for range [${fromBlock}, ${toBlock}] after 20 attempts`);
   }
 
-  // ── query() — parallel chunked backfill ──────────────────────────────────
+  // ── queryStream() — sequential chunked streaming ─────────────────────────
+  //
+  // Fetches one chunk at a time and yields events immediately. Peak memory is
+  // bounded by one chunk (≤ chunkSize blocks) rather than the entire range.
+  // Concurrency > 1 is intentionally not supported here — ordered streaming
+  // without full materialisation requires sequential fetching.
 
-  async query(
+  async *queryStream(
     fromBlock: number,
     toBlock:   number,
     filters?:  EventSourceFilters,
-  ): Promise<DecodedEvent[]> {
-    // Pre-compute all chunk boundaries so we can fetch in parallel while
-    // preserving block-number order in the output.
-    const chunks: Array<{ from: number; to: number }> = [];
+  ): AsyncIterable<DecodedEvent> {
     for (let f = fromBlock; f <= toBlock; ) {
-      const end = Math.min(f + this.chunkSize - 1, toBlock);
-      chunks.push({ from: f, to: end });
+      const end    = Math.min(f + this.chunkSize - 1, toBlock);
+      const events = await this.fetchChunk(f, end, filters);
+      for (const event of events) yield event;
       f = end + 1;
     }
-
-    const results: DecodedEvent[][] = new Array<DecodedEvent[]>(chunks.length);
-
-    // Fetch in sliding batches of `concurrency`. Within each batch all requests
-    // fire simultaneously; the next batch starts only after all complete.
-    // Results are stored by index so output order is always fromBlock → toBlock.
-    for (let i = 0; i < chunks.length; i += this.concurrency) {
-      const batch = chunks.slice(i, i + this.concurrency);
-      await Promise.all(
-        batch.map((chunk, j) =>
-          this.fetchChunk(chunk.from, chunk.to, filters).then(events => {
-            results[i + j] = events;
-          }),
-        ),
-      );
-    }
-
-    return results.flat();
   }
 
   // ── subscribe() — WS-first, polling fallback ─────────────────────────────────
@@ -513,8 +498,7 @@ export class OpStreamRpcEventSource implements EventSource {
       try {
         const maxBlock = await this.getLatestBlock();
         if (maxBlock > lastBlock) {
-          const events = await this.query(lastBlock + 1, maxBlock);
-          for (const e of events) {
+          for await (const e of this.queryStream(lastBlock + 1, maxBlock)) {
             if (stopped) return;
             await onEvent(e);
           }

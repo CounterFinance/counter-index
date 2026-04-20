@@ -101,11 +101,11 @@ describe('WsEventSource', () => {
 
   // ── query() ──────────────────────────────────────────────────────────────
 
-  it('query() throws a helpful message', () => {
+  it('queryStream() rejects with a helpful message', async () => {
     const source = new WsEventSource(url);
-    expect(() => source.query()).toThrowError(
-      /WsEventSource is live-only/,
-    );
+    await expect(async () => {
+      for await (const _ of source.queryStream()) { /* empty */ }
+    }).rejects.toThrowError(/WsEventSource is live-only/);
   });
 
   // ── subscribe() — basic delivery ─────────────────────────────────────────

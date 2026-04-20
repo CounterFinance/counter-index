@@ -5,6 +5,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { OpStreamRpcEventSource } from '../src/opStreamRpcSource.js';
 
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of iter) out.push(item);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -78,7 +84,7 @@ describe('OpStreamRpcEventSource — logIndex continuity', () => {
     mockFetch(result);
 
     const src = new OpStreamRpcEventSource('http://localhost');
-    const events = await src.query(100, 100);
+    const events = await collect(src.queryStream(100, 100));
 
     expect(events).toHaveLength(3);
     expect(events[0]!.logIndex).toBe(0);
@@ -113,7 +119,7 @@ describe('OpStreamRpcEventSource — logIndex continuity', () => {
     mockFetch(result);
 
     const src = new OpStreamRpcEventSource('http://localhost');
-    const events = await src.query(200, 200);
+    const events = await collect(src.queryStream(200, 200));
 
     expect(events).toHaveLength(4);
     // tx1 events: logIndex 0, 1
@@ -142,7 +148,7 @@ describe('OpStreamRpcEventSource — logIndex continuity', () => {
     mockFetch(result);
 
     const src = new OpStreamRpcEventSource('http://localhost');
-    const events = await src.query(400, 400);
+    const events = await collect(src.queryStream(400, 400));
 
     expect(events[0]!.fromAddress).toMatch(/^op1/);
     expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
@@ -167,7 +173,7 @@ describe('OpStreamRpcEventSource — logIndex continuity', () => {
     mockFetch(result);
 
     const src = new OpStreamRpcEventSource('http://localhost');
-    const events = await src.query(300, 300, { eventNames: ['Included'] });
+    const events = await collect(src.queryStream(300, 300, { eventNames: ['Included'] }));
 
     expect(events).toHaveLength(2);
     expect(events[0]!.logIndex).toBe(0);

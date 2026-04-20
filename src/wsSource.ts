@@ -113,7 +113,8 @@ export class WsEventSource implements EventSource {
     private readonly options: WsEventSourceOptions = {},
   ) {}
 
-  query(): Promise<DecodedEvent[]> {
+  // eslint-disable-next-line require-yield
+  async *queryStream(): AsyncIterable<DecodedEvent> {
     throw new Error(
       '[op-index] WsEventSource is live-only — use DbEventSource for historical backfill.',
     );

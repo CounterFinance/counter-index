@@ -12,6 +12,12 @@ import { createStore } from '../src/store.js';
 import { DbEventSource } from '../src/source.js';
 import type { MinimalDbAdapter } from '../src/adapter.js';
 
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of iter) out.push(item);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Recording mock — simulates a Postgres adapter without a real connection
 // ---------------------------------------------------------------------------
@@ -219,7 +225,7 @@ describe('DbEventSource Postgres placeholders', () => {
     const src = new DbEventSource(adapter);
     adapter.clear();
     // query returns [] since mock returns no rows — we only care about the SQL
-    await src.query(100, 200);
+    await collect(src.queryStream(100, 200));
     const q = adapter.find('block_number')?.sql ?? '';
     expect(q).toContain('$1');
     expect(q).toContain('$2');
@@ -229,7 +235,7 @@ describe('DbEventSource Postgres placeholders', () => {
   it('uses $3 for contract filter', async () => {
     const src = new DbEventSource(adapter);
     adapter.clear();
-    await src.query(100, 200, { contract: '0xtoken1' });
+    await collect(src.queryStream(100, 200, { contract: '0xtoken1' }));
     const q = adapter.find('contract_address')?.sql ?? '';
     expect(q).toContain('$3');
     expect(q).not.toContain('?');
@@ -238,7 +244,7 @@ describe('DbEventSource Postgres placeholders', () => {
   it('uses $3 and $4 for two event name filters', async () => {
     const src = new DbEventSource(adapter);
     adapter.clear();
-    await src.query(100, 200, { eventNames: ['Transferred', 'Approval'] });
+    await collect(src.queryStream(100, 200, { eventNames: ['Transferred', 'Approval'] }));
     const q = adapter.find('event_name')?.sql ?? '';
     expect(q).toContain('$3');
     expect(q).toContain('$4');

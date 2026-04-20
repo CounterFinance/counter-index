@@ -182,12 +182,11 @@ export class RpcEventSource implements EventSource {
     this.retryDelayMs  = options.retryDelayMs ?? 1000;
   }
 
-  async query(
+  async *queryStream(
     fromBlock: number,
     toBlock: number,
     filters?: EventSourceFilters,
-  ): Promise<DecodedEvent[]> {
-    const results: DecodedEvent[] = [];
+  ): AsyncIterable<DecodedEvent> {
     let lastCallAt = 0;
 
     for (let n = fromBlock; n <= toBlock; n++) {
@@ -202,10 +201,8 @@ export class RpcEventSource implements EventSource {
 
       if (!block) continue; // null after maxRetries — skip block
 
-      results.push(...extractEvents(block, n, filters));
+      for (const event of extractEvents(block, n, filters)) yield event;
     }
-
-    return results;
   }
 
   subscribe(
@@ -223,8 +220,7 @@ export class RpcEventSource implements EventSource {
         const tip = await this.provider.getBlockNumber();
         const maxBlock = Number(tip);
         if (maxBlock > lastBlock) {
-          const events = await this.query(lastBlock + 1, maxBlock);
-          for (const e of events) {
+          for await (const e of this.queryStream(lastBlock + 1, maxBlock)) {
             if (stopped) return;
             await onEvent(e);
           }
