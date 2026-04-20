@@ -178,6 +178,13 @@ export async function createIndexer<S extends SchemaDefinition>(
     } else {
       stats.eventsSkipped++;
     }
+    log.debug('handler', 'dispatch', {
+      event:    event.eventName,
+      contract: event.contractAddress,
+      block:    event.blockNumber,
+      tx:       event.txHash,
+      decoded:  event.decoded !== null,
+    });
     await registry.dispatch(event, makeContext(event));
   }
 
@@ -263,6 +270,12 @@ export async function createIndexer<S extends SchemaDefinition>(
     async sync(fromBlock, toBlock, filters) {
       const source = requireSource();
       const syncStart  = Date.now();
+      log.info('indexer', 'sync start', {
+        from:   fromBlock,
+        to:     toBlock,
+        blocks: toBlock - fromBlock + 1,
+        events: filters?.eventNames ?? ['*'],
+      });
       let currentBlock = -1;
       let currentTimestamp: number | undefined;
       let eventsInBlock = 0;
