@@ -193,7 +193,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
       await store.writeBlockCheckpoint(blockNumber, tipBlock);
     });
-    log.info('indexer', 'block processed', {
+    log.debug('indexer', 'block processed', {
       block:           blockNumber,
       events_in_block: eventsInBlock,
       elapsed_ms:      Date.now() - t0,
@@ -288,11 +288,11 @@ export async function createIndexer<S extends SchemaDefinition>(
               ? Math.round(behind / (blkDelta / elapsed))
               : null;
             log.info('indexer', 'progress', {
-              block:         currentBlock,
-              tip:           toBlock,
+              block:          currentBlock,
+              tip:            toBlock,
               behind,
-              blocks_per_sec: blkPerSec,
-              events_per_sec: ((progressEvents) / elapsed).toFixed(1),
+              blocks_per_sec: Number(blkPerSec),
+              events_per_sec: Number((progressEvents / elapsed).toFixed(1)),
               eta_sec:        eta,
             });
             lastProgressAt = now;
@@ -319,7 +319,7 @@ export async function createIndexer<S extends SchemaDefinition>(
         blocks:     toBlock - fromBlock + 1,
         events:     stats.eventsProcessed,
         elapsed_ms: elapsedMs,
-        blocks_per_sec: ((toBlock - fromBlock + 1) / (elapsedMs / 1_000)).toFixed(1),
+        blocks_per_sec: Number(((toBlock - fromBlock + 1) / (elapsedMs / 1_000)).toFixed(1)),
       });
 
       return { ...stats };
