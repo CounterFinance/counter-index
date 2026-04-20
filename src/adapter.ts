@@ -195,7 +195,7 @@ export class PostgresAdapter implements MinimalDbAdapter {
  */
 export async function openPostgres(connectionString: string): Promise<PostgresAdapter> {
   const { default: postgres } = await import('postgres');
-  const sql = postgres(connectionString, { max: 10 });
+  const sql = postgres(connectionString, { max: 10, onnotice: () => {} });
   // Verify the connection is reachable before returning
   await sql`SELECT 1`;
   return new PostgresAdapter(sql);

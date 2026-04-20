@@ -145,9 +145,9 @@ export type { ServeOptions, ServeHandle };
 export async function createIndexer<S extends SchemaDefinition>(
   config: IndexerConfig<S>,
 ): Promise<Indexer> {
-  const store = await createStore(config.schema, config.sink);
-  const registry = new HandlerRegistry();
   const log = config.logger ?? noopLogger;
+  const store = await createStore(config.schema, config.sink, log);
+  const registry = new HandlerRegistry();
   let stats: IndexerStats = {
     eventsProcessed: 0,
     eventsDecoded: 0,
@@ -178,33 +178,41 @@ export async function createIndexer<S extends SchemaDefinition>(
     } else {
       stats.eventsSkipped++;
     }
+    // DEBUG: compact per-event line — the event name is the handler identifier.
     log.debug('handler', 'dispatch', {
       event:    event.eventName,
       contract: event.contractAddress,
       block:    event.blockNumber,
       tx:       event.txHash,
-      decoded:  event.decoded !== null,
     });
+    // TRACE: per-handler timing — only computed when log is trace-enabled.
+    const t0 = Date.now();
     await registry.dispatch(event, makeContext(event));
+    log.trace('handler', 'dispatched', {
+      event:      event.eventName,
+      block:      event.blockNumber,
+      tx:         event.txHash,
+      elapsed_ms: Date.now() - t0,
+    });
   }
 
+  /**
+   * Flush a block: run onBlock handlers + write the checkpoint atomically.
+   * Returns elapsed_ms so callers can emit a log line at the level they want
+   * (DEBUG during sync, INFO during subscribe).
+   */
   async function dispatchBlock(
     blockNumber: number,
     blockTimestamp: number | undefined,
-    eventsInBlock: number,
     tipBlock?: number,
-  ): Promise<void> {
+  ): Promise<number> {
     stats.blocksProcessed++;
     const t0 = Date.now();
     await config.sink.transaction(async () => {
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
       await store.writeBlockCheckpoint(blockNumber, tipBlock);
     });
-    log.debug('indexer', 'block processed', {
-      block:           blockNumber,
-      events_in_block: eventsInBlock,
-      elapsed_ms:      Date.now() - t0,
-    });
+    return Date.now() - t0;
   }
 
   function requireSource(): EventSource {
@@ -236,7 +244,10 @@ export async function createIndexer<S extends SchemaDefinition>(
 
       for (const event of events) {
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
+          const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+          log.debug('indexer', 'block processed', {
+            block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+          });
           eventsInBlock = 0;
         }
         currentBlock     = event.blockNumber;
@@ -246,7 +257,10 @@ export async function createIndexer<S extends SchemaDefinition>(
       }
 
       if (currentBlock !== -1) {
-        await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
+        const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+        log.debug('indexer', 'block processed', {
+          block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+        });
       }
     },
 
@@ -270,41 +284,49 @@ export async function createIndexer<S extends SchemaDefinition>(
     async sync(fromBlock, toBlock, filters) {
       const source = requireSource();
       const syncStart  = Date.now();
-      log.info('indexer', 'sync start', {
-        from:   fromBlock,
-        to:     toBlock,
-        blocks: toBlock - fromBlock + 1,
-        events: filters?.eventNames ?? ['*'],
+
+      // DEBUG: per-window framing. Consumers typically log an INFO
+      // "backfilling X → Y" line that aggregates many windows, so this
+      // would be redundant at INFO.
+      const filterNames = filters?.eventNames ?? null;
+      log.debug('indexer', 'sync start', {
+        from:        fromBlock,
+        to:          toBlock,
+        blocks:      toBlock - fromBlock + 1,
+        event_count: filterNames ? filterNames.length : 0,
+        events:      filterNames ? filterNames.join(',') : '*',
       });
+
       let currentBlock = -1;
       let currentTimestamp: number | undefined;
       let eventsInBlock = 0;
 
-      // Progress ticker — emit a log line every 5 seconds during long syncs
+      // Progress ticker — emit a log line every 5 seconds during long syncs.
+      // This is the primary INFO heartbeat; skip the per-block / per-window lines
+      // (they're DEBUG).
       let lastProgressAt = Date.now();
       let progressBlock  = fromBlock;
       let progressEvents = 0;
 
       for await (const event of source.queryStream(fromBlock, toBlock, filters)) {
-        // Block boundary — flush completed block before moving to the next
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
+          const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+          log.debug('indexer', 'block processed', {
+            block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+          });
           eventsInBlock = 0;
 
           const now = Date.now();
           if (now - lastProgressAt >= 5_000) {
-            const elapsed    = (now - lastProgressAt) / 1_000;
-            const blkDelta   = currentBlock - progressBlock;
-            const blkPerSec  = (blkDelta / elapsed).toFixed(1);
-            const behind     = toBlock - currentBlock;
-            const eta        = blkDelta > 0
-              ? Math.round(behind / (blkDelta / elapsed))
-              : null;
+            const elapsed   = (now - lastProgressAt) / 1_000;
+            const blkDelta  = currentBlock - progressBlock;
+            const behind    = toBlock - currentBlock;
+            const eta       = blkDelta > 0 ? Math.round(behind / (blkDelta / elapsed)) : null;
             log.info('indexer', 'progress', {
               block:          currentBlock,
               tip:            toBlock,
               behind,
-              blocks_per_sec: Number(blkPerSec),
+              blocks_per_sec: Number((blkDelta / elapsed).toFixed(1)),
               events_per_sec: Number((progressEvents / elapsed).toFixed(1)),
               eta_sec:        eta,
             });
@@ -320,18 +342,20 @@ export async function createIndexer<S extends SchemaDefinition>(
         await dispatch(event);
       }
 
-      // Flush the final block
       if (currentBlock !== -1) {
-        await dispatchBlock(currentBlock, currentTimestamp, eventsInBlock);
+        const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+        log.debug('indexer', 'block processed', {
+          block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+        });
       }
 
       const elapsedMs = Date.now() - syncStart;
-      log.info('indexer', 'sync complete', {
-        from:       fromBlock,
-        to:         toBlock,
-        blocks:     toBlock - fromBlock + 1,
-        events:     stats.eventsProcessed,
-        elapsed_ms: elapsedMs,
+      log.debug('indexer', 'sync complete', {
+        from:           fromBlock,
+        to:             toBlock,
+        blocks:         toBlock - fromBlock + 1,
+        events:         stats.eventsProcessed,
+        elapsed_ms:     elapsedMs,
         blocks_per_sec: Number(((toBlock - fromBlock + 1) / (elapsedMs / 1_000)).toFixed(1)),
       });
 
@@ -346,11 +370,18 @@ export async function createIndexer<S extends SchemaDefinition>(
       let lastTimestamp: number | undefined;
 
       let eventsInBlock = 0;
+      log.info('indexer', 'subscribe start', { from_block: fromBlock });
+
       return source.subscribe(
         fromBlock,
         async (event) => {
           if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
-            await dispatchBlock(lastBlock, lastTimestamp, eventsInBlock);
+            const elapsedMs = await dispatchBlock(lastBlock, lastTimestamp);
+            // INFO: live-mode heartbeat. At ~1 block / 10s this is ~6 lines/min,
+            // giving a clear "still alive" signal without flooding logs.
+            log.info('indexer', 'live block', {
+              block: lastBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+            });
             eventsInBlock = 0;
           }
           lastBlock     = event.blockNumber;

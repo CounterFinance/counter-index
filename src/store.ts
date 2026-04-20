@@ -15,6 +15,7 @@
 
 import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
 import type { MinimalDbAdapter } from './adapter.js';
+import { noopLogger, type IndexerLogger } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // Public interface (fully async)
@@ -229,6 +230,7 @@ function buildUpsert(
 export async function createStore(
   schema: Schema<SchemaDefinition>,
   adapter: MinimalDbAdapter,
+  logger: IndexerLogger = noopLogger,
 ): Promise<EntityStore> {
   const dialect = adapter.dialect;
 
@@ -241,12 +243,15 @@ export async function createStore(
 
   // Indexed-block checkpoint — one singleton row, updated atomically with
   // entity writes at the end of each block's transaction.
+  // Use BIGINT for Postgres: last_block can exceed int4 on long chains,
+  // and updated_at is Date.now() (ms since epoch, ~1.78T in 2026).
+  const intType = dialect === 'postgres' ? 'BIGINT' : 'INTEGER';
   await adapter.exec(`
     CREATE TABLE IF NOT EXISTS opindex_meta (
-      id          TEXT    NOT NULL PRIMARY KEY,
-      last_block  INTEGER NOT NULL,
-      tip_block   INTEGER,
-      updated_at  INTEGER NOT NULL
+      id          TEXT     NOT NULL PRIMARY KEY,
+      last_block  ${intType} NOT NULL,
+      tip_block   ${intType},
+      updated_at  ${intType} NOT NULL
     )
   `);
 
@@ -278,7 +283,9 @@ export async function createStore(
       const table = tableName(entity);
       const fields = Object.keys(def);
       const values = [id, ...fields.map((f) => serialise(data[f], def[f].type, dialect))];
+      const t0 = Date.now();
       await adapter.run(buildUpsert(table, fields, dialect), values);
+      logger.trace('store', 'set', { entity, id, elapsed_ms: Date.now() - t0 });
 
       // Notify with the JS-typed record (not the serialised SQL form)
       const record: Record<string, unknown> = { id };
@@ -312,10 +319,12 @@ export async function createStore(
       if (setClauses.length === 0) return;
 
       const whereParam = param(dialect, setValues.length + 1);
+      const t0 = Date.now();
       await adapter.run(
         `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ${whereParam}`,
         [...setValues, id],
       );
+      logger.trace('store', 'update', { entity, id, fields: setClauses.length, elapsed_ms: Date.now() - t0 });
 
       // Re-read the full row so the notification has the complete merged record
       const updated = await adapter.get<Record<string, unknown>>(
@@ -328,10 +337,12 @@ export async function createStore(
     async delete(entity, id) {
       assertKnown(entity);
       const table = tableName(entity);
+      const t0 = Date.now();
       await adapter.run(
         `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
         [id],
       );
+      logger.trace('store', 'delete', { entity, id, elapsed_ms: Date.now() - t0 });
       notify({ entity, id, record: null, operation: 'delete' });
     },
 
