@@ -286,13 +286,23 @@ export class OpStreamRpcEventSource implements EventSource {
     return Number(BigInt(n));
   }
 
-  // ── Fetch one chunk — auto-retry with aggressive halving ──────────────────
+  // ── Fetch one chunk — auto-retry with aggressive halving, yielding per event ─
+  //
+  // Peak memory is bounded by one successfully-fetched sub-chunk (after server
+  // halving). Events are yielded to the consumer as soon as a sub-chunk lands,
+  // so the caller's `for await … await dispatch()` applies true backpressure.
+  // Recursion across a halved remainder uses `yield*` instead of array concat
+  // so no cross-sub-chunk array is ever materialised.
+  //
+  // Returns `true` if the full [fromBlock, toBlock] range was covered (even if
+  // a single dense block was skipped with a warning), `false` only when the
+  // server was completely unresponsive within the 20-attempt budget (thrown).
 
-  private async fetchChunk(
+  private async *fetchChunk(
     fromBlock: number,
     toBlock:   number,
     filters?:  EventSourceFilters,
-  ): Promise<DecodedEvent[]> {
+  ): AsyncIterable<DecodedEvent> {
     let chunkEnd = toBlock;
 
     // Up to 20 attempts: aggressive halving handles blocks with thousands of
@@ -307,11 +317,16 @@ export class OpStreamRpcEventSource implements EventSource {
         const events    = mapBlocksToEvents(blocks, filters);
         const elapsedMs = Date.now() - t0;
         this.onChunkFetched?.({ fromBlock, toBlock: chunkEnd, events: events.length, elapsedMs });
+
+        // Stream this sub-chunk's events immediately — no buffering across the
+        // halved remainder. The consumer's awaited consumption throttles the
+        // inner fetches naturally.
+        for (const event of events) yield event;
+
         if (chunkEnd < toBlock) {
-          const remaining = await this.fetchChunk(chunkEnd + 1, toBlock, filters);
-          return [...events, ...remaining];
+          yield* this.fetchChunk(chunkEnd + 1, toBlock, filters);
         }
-        return events;
+        return;
 
       } catch (err: unknown) {
         // Server returns -32602 when the range exceeds tx/event limits.
@@ -335,7 +350,7 @@ export class OpStreamRpcEventSource implements EventSource {
           // eslint-disable-next-line no-console
           console.warn(`[op-index] OpStreamRpcEventSource: skipping single dense block ${fromBlock} (server limit exceeded)`);
           this.onBlockSkipped?.(fromBlock);
-          return [];
+          return;
         }
 
         // Halve the range and retry
@@ -347,10 +362,11 @@ export class OpStreamRpcEventSource implements EventSource {
 
   // ── queryStream() — sequential chunked streaming ─────────────────────────
   //
-  // Fetches one chunk at a time and yields events immediately. Peak memory is
-  // bounded by one chunk (≤ chunkSize blocks) rather than the entire range.
-  // Concurrency > 1 is intentionally not supported here — ordered streaming
-  // without full materialisation requires sequential fetching.
+  // True streaming: events are yielded as each halved sub-chunk lands inside
+  // fetchChunk. Peak memory is bounded by a single sub-chunk — typically
+  // thousands, not millions, of events — regardless of chunkSize or the
+  // range width. Concurrency > 1 is intentionally not supported here —
+  // ordered streaming without full materialisation requires sequential fetching.
 
   async *queryStream(
     fromBlock: number,
@@ -358,9 +374,8 @@ export class OpStreamRpcEventSource implements EventSource {
     filters?:  EventSourceFilters,
   ): AsyncIterable<DecodedEvent> {
     for (let f = fromBlock; f <= toBlock; ) {
-      const end    = Math.min(f + this.chunkSize - 1, toBlock);
-      const events = await this.fetchChunk(f, end, filters);
-      for (const event of events) yield event;
+      const end = Math.min(f + this.chunkSize - 1, toBlock);
+      yield* this.fetchChunk(f, end, filters);
       f = end + 1;
     }
   }
