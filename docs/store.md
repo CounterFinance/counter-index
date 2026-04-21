@@ -52,6 +52,21 @@ await ctx.store.update('Pool', contractAddress, {
 This is the correct choice for event handlers that only touch a subset of fields (e.g. a `Synced`
 event updates reserves but not token addresses).
 
+> **Footgun: entities created before `FROM_BLOCK` do not exist in the store.**
+>
+> If you set `FROM_BLOCK` to a block after a contract was deployed, the `set()` that would have
+> created the entity never runs — but later `update()` events for that entity still fire and will
+> throw. Always guard with `store.get()` before calling `update()` on an entity that may predate
+> your index start:
+>
+> ```ts
+> indexer.on('MarketCapacityUpdated', async (event, ctx) => {
+>   const market = await ctx.store.get('Market', marketId);
+>   if (!market) return; // created before FROM_BLOCK — skip
+>   await ctx.store.update('Market', marketId, { capacity: newCapacity });
+> });
+> ```
+
 ### `store.delete(entity, id)`
 
 Remove an entity. No-op if it does not exist — never throws on missing records.
@@ -136,6 +151,23 @@ const active   = pool!['active']   as boolean;
 `bigint` fields are deserialised from SQL's decimal string representation back to native `BigInt`
 on every read — you never need to call `BigInt()` on store results, only on values coming from
 `event.decoded` (which arrives as strings from the decoder).
+
+> **Postgres `int` fields return as strings at runtime.**
+>
+> node-postgres maps `BIGINT` columns to JavaScript strings (not numbers) to avoid precision loss.
+> The `as number` cast above is compile-time only — at runtime `feeBps` is still the string `"30"`.
+> This is harmless for most reads, but causes silent bugs when you do arithmetic and then store
+> the result back:
+>
+> ```ts
+> // ❌ "30" + 1 = "301"  (string concat)
+> const next = (pool!['feeBps'] as number) + 1;
+>
+> // ✓ 30 + 1 = 31
+> const next = Number(pool!['feeBps']) + 1;
+> ```
+>
+> Use `Number()` whenever you read an `int` field and plan to do arithmetic on it.
 
 ## Accessing the store outside handlers
 
