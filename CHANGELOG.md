@@ -2,6 +2,28 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.12-alpha.2] — 2026-04-21
+
+### Fixed
+
+- **`OpStreamRpcEventSource.queryStream()` now truly streams across halved sub-chunks.**
+  In `0.1.12-alpha.1`, `fetchChunk()` returned `Promise<DecodedEvent[]>` and, when the
+  server halved a range with `-32602`, recursed with `return [...events, ...remaining]`.
+  `queryStream()` awaited that promise before yielding anything, so every halved
+  sub-chunk inside one `chunkSize` boundary was materialised into one array before the
+  consumer saw a single event — defeating the backpressure that `for await … await
+  dispatch()` provides. On dense testnet ranges (thousands of events per block) this
+  reproducibly OOM'd the process at the `--max-old-space-size` ceiling.
+
+  `fetchChunk()` is now an `async *` generator that yields events from each successfully
+  fetched sub-chunk immediately and recurses the halved remainder via `yield*` — never
+  materialising a cross-sub-chunk array. Peak memory during backfill is now bounded by
+  a single sub-chunk (typically a few thousand events), independent of `chunkSize` or
+  the `sync()` window width.
+
+  Regression test: `tests/opStreamRpcSource.test.ts` now asserts that the remainder
+  fetch is deferred until after the first sub-chunk's events have been consumed.
+
 ## [0.1.12] — 2026-04-20
 
 ### Added
