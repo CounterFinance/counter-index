@@ -2,6 +2,22 @@
 
 All notable changes to `@opnet-collective/op-index` are documented here.
 
+## [0.1.12-alpha.3] — 2026-04-22
+
+### Fixed
+
+- **Subscribe poll loop now recovers from hung OpStream connections.**
+  `rpc()` had no fetch timeout — a connection that was accepted but never responded
+  blocked `_subscribePoll()` forever, silently killing the loop with no log and no crash.
+  Added `AbortSignal.timeout(60_000)` as the default so every RPC call throws after 60s,
+  the catch fires, and the next poll resumes on schedule.
+
+- **Poll errors are now visible in logs.**
+  Both `OpStreamRpcEventSource._subscribePoll()` and `DbEventSource.subscribe()` had bare
+  `catch {}` blocks that swallowed every error silently. Any OpStream outage, network blip,
+  or bad response was invisible — operators only saw "no handler activity recorded" hours
+  later. Now logs: `[op-index] subscribe poll error (will retry in Xs): <message>`.
+
 ## [0.1.12-alpha.2] — 2026-04-21
 
 ### Fixed
