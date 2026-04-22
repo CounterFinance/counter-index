@@ -10,6 +10,12 @@ import Database from 'better-sqlite3';
 import { SqliteAdapter } from '../src/adapter.js';
 import { DbEventSource } from '../src/source.js';
 
+async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of iter) out.push(item);
+  return out;
+}
+
 // Minimal OpStream schema — just the tables DbEventSource JOINs against
 const OPSTREAM_SCHEMA = `
   CREATE TABLE IF NOT EXISTS blocks (
@@ -82,7 +88,7 @@ beforeEach(() => {
 
 describe('DbEventSource.query', () => {
   it('returns all events in range ordered by block, log_index', async () => {
-    const events = await source.query(100, 101);
+    const events = await collect(source.queryStream(100, 101));
     expect(events).toHaveLength(4);
     expect(events[0]!.blockNumber).toBe(100);
     expect(events[1]!.blockNumber).toBe(101);
@@ -94,35 +100,35 @@ describe('DbEventSource.query', () => {
   });
 
   it('respects fromBlock/toBlock range', async () => {
-    const events = await source.query(101, 101);
+    const events = await collect(source.queryStream(101, 101));
     expect(events).toHaveLength(3);
     expect(events.every((e) => e.blockNumber === 101)).toBe(true);
   });
 
   it('filters by contract address', async () => {
-    const events = await source.query(100, 101, { contract: '0xtoken2' });
+    const events = await collect(source.queryStream(100, 101, { contract: '0xtoken2' }));
     expect(events).toHaveLength(1);
     expect(events[0]!.contractAddress).toBe('0xtoken2');
   });
 
   it('filters by event names', async () => {
-    const events = await source.query(100, 101, { eventNames: ['Approval'] });
+    const events = await collect(source.queryStream(100, 101, { eventNames: ['Approval'] }));
     expect(events).toHaveLength(1);
     expect(events[0]!.eventName).toBe('Approval');
   });
 
   it('returns empty for out-of-range blocks', async () => {
-    const events = await source.query(999, 1000);
+    const events = await collect(source.queryStream(999, 1000));
     expect(events).toHaveLength(0);
   });
 
   it('populates blockTimestamp from blocks JOIN', async () => {
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     expect(events[0]!.blockTimestamp).toBe(1712340000);
   });
 
   it('populates fromAddress and gasUsed from transactions JOIN', async () => {
-    const events = await source.query(100, 100);
+    const events = await collect(source.queryStream(100, 100));
     // '0xalice' is not a 32-byte hex pubkey — passes through unchanged
     expect(events[0]!.fromAddress).toBe('0xalice');
     expect(events[0]!.fromAddressPubkey).toBeUndefined();
@@ -143,19 +149,19 @@ describe('DbEventSource.query', () => {
     db2.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(200, '0xtx_pub', '0xtoken', 'Transferred', 0, new Uint8Array(0), 0);
     const src2 = new DbEventSource(new SqliteAdapter(db2));
-    const events = await src2.query(200, 200);
+    const events = await collect(src2.queryStream(200, 200));
     expect(events[0]!.fromAddress).toMatch(/^op1/);
     expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
   });
 
   it('populates failed=true and revertReason for failed tx', async () => {
-    const events = await source.query(101, 101, { contract: '0xtoken2' });
+    const events = await collect(source.queryStream(101, 101, { contract: '0xtoken2' }));
     expect(events[0]!.failed).toBe(true);
     expect(events[0]!.revertReason).toBe('insufficient balance');
   });
 
   it('populates txEvents with sibling events from the same tx', async () => {
-    const events = await source.query(101, 101, { eventNames: ['Approval'] });
+    const events = await collect(source.queryStream(101, 101, { eventNames: ['Approval'] }));
     expect(events).toHaveLength(1);
     const approval = events[0]!;
     // The only Approval is on tx2. tx2 also has a Transferred event at log_index 0.
@@ -166,14 +172,14 @@ describe('DbEventSource.query', () => {
   });
 
   it('txEvents is shared by reference for sibling events from the same tx', async () => {
-    const events = await source.query(101, 101, { contract: '0xtoken1' });
+    const events = await collect(source.queryStream(101, 101, { contract: '0xtoken1' }));
     // Both events here are from tx2 (Transferred + Approval). They share the Map.
     expect(events).toHaveLength(2);
     expect(events[0]!.txEvents).toBe(events[1]!.txEvents);
   });
 
   it('txEvents is scoped per-tx (different txs get different maps)', async () => {
-    const events = await source.query(101, 101);
+    const events = await collect(source.queryStream(101, 101));
     // block 101 has tx2 and tx3 — distinct Maps
     const tx2Event = events.find(e => e.txHash === '0xtx2');
     const tx3Event = events.find(e => e.txHash === '0xtx3');

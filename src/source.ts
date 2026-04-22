@@ -32,14 +32,15 @@ export interface EventSourceFilters {
 
 export interface EventSource {
   /**
-   * Backfill: fetch all events in [fromBlock, toBlock] inclusive, ordered by
-   * block_number ASC, log_index ASC. Filters are ANDed.
+   * Backfill: stream all events in [fromBlock, toBlock] inclusive, ordered by
+   * block_number ASC, log_index ASC. Memory is bounded — events are yielded as
+   * they are fetched, never materialised into one array. Filters are ANDed.
    */
-  query(
+  queryStream(
     fromBlock: number,
     toBlock: number,
     filters?: EventSourceFilters,
-  ): Promise<DecodedEvent[]>;
+  ): AsyncIterable<DecodedEvent>;
 
   /**
    * Live: poll for new events after fromBlock and call onEvent for each.
@@ -234,22 +235,22 @@ export class DbEventSource implements EventSource {
     private readonly db: MinimalDbAdapter,
   ) {}
 
-  async query(
+  async *queryStream(
     fromBlock: number,
     toBlock: number,
     filters?: EventSourceFilters,
-  ): Promise<DecodedEvent[]> {
+  ): AsyncIterable<DecodedEvent> {
     const { sql, params } = buildQuery(fromBlock, toBlock, this.db.dialect, filters);
     const rows = await this.db.all<EventJoinRow>(sql, params);
-    if (rows.length === 0) return [];
+    if (rows.length === 0) return;
 
-    // Second query: fetch full sibling-event sets for each tx in the primary
-    // result so txEvents parity holds even when the primary filter is narrow.
-    // This preserves the router-correlation pattern on DB replay.
+    // Fetch sibling-event sets for txEvents correlation (router pattern).
     const uniqueTxs = Array.from(new Set(rows.map(r => r.tx_hash)));
     const txMaps = await fetchTxEventsMaps(this.db, fromBlock, toBlock, uniqueTxs);
 
-    return rows.map(row => rowToEvent(row, txMaps.get(row.tx_hash)));
+    for (const row of rows) {
+      yield rowToEvent(row, txMaps.get(row.tx_hash));
+    }
   }
 
   subscribe(
@@ -270,15 +271,15 @@ export class DbEventSource implements EventSource {
         );
         const maxBlock = tip?.max_block ?? lastBlock;
         if (maxBlock > lastBlock) {
-          const events = await this.query(lastBlock + 1, maxBlock);
-          for (const e of events) {
+          for await (const e of this.queryStream(lastBlock + 1, maxBlock)) {
             if (stopped) return;
             await onEvent(e);
           }
           lastBlock = maxBlock;
         }
-      } catch {
-        // poll errors are non-fatal — next tick will retry
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[op-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
       }
       if (!stopped) {
         setTimeout(() => { void poll(); }, intervalMs);

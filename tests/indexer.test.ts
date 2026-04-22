@@ -412,3 +412,57 @@ describe('onBlock', () => {
     expect(fired).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Range-end checkpoint (sync advances _meta even when last N blocks are empty)
+// ---------------------------------------------------------------------------
+
+describe('sync() range-end checkpoint', () => {
+  function makeSource(events: DecodedEvent[]) {
+    return {
+      async *queryStream() { yield* events; },
+      subscribe() { return () => {}; },
+    };
+  }
+
+  it('checkpoints toBlock when range has no events at all', async () => {
+    const indexer = await createIndexer({
+      schema, sink: adapter,
+      source: makeSource([]),
+    });
+    await indexer.sync(1, 50);
+    const cp = await indexer.store.readCheckpoint();
+    expect(cp?.lastBlock).toBe(50);
+  });
+
+  it('checkpoints toBlock when last blocks in range have no events', async () => {
+    const indexer = await createIndexer({
+      schema, sink: adapter,
+      source: makeSource([
+        makeEvent('X', {}, { blockNumber: 10, txHash: 'a' }),
+        makeEvent('X', {}, { blockNumber: 20, txHash: 'b' }),
+        // blocks 21-50 have no events
+      ]),
+    });
+    await indexer.sync(1, 50);
+    const cp = await indexer.store.readCheckpoint();
+    expect(cp?.lastBlock).toBe(50);
+  });
+
+  it('does not fire onBlock for the synthetic range-end write', async () => {
+    const indexer = await createIndexer({
+      schema, sink: adapter,
+      source: makeSource([
+        makeEvent('X', {}, { blockNumber: 5, txHash: 'a' }),
+        // blocks 6-20 have no events
+      ]),
+    });
+    const blocksSeen: number[] = [];
+    indexer.onBlock(async ({ blockNumber }) => { blocksSeen.push(blockNumber); });
+    await indexer.sync(1, 20);
+    // onBlock should only fire for block 5 (has events), NOT for block 20 (range-end)
+    expect(blocksSeen).toEqual([5]);
+    const cp = await indexer.store.readCheckpoint();
+    expect(cp?.lastBlock).toBe(20);
+  });
+});

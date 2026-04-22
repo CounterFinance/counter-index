@@ -262,11 +262,12 @@ export class OpStreamRpcEventSource implements EventSource {
 
   // ── HTTP JSON-RPC call ──────────────────────────────────────────────────────
 
-  private async rpc<T>(method: string, params: unknown[]): Promise<T> {
+  private async rpc<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
     const resp = await fetch(this.httpUrl, {
       method:  'POST',
       headers: { 'content-type': 'application/json' },
       body:    JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+      signal:  signal ?? AbortSignal.timeout(60_000),
     });
     const json = await resp.json() as { result?: T; error?: { code: number; message: string } };
     if (json.error) {
@@ -286,13 +287,23 @@ export class OpStreamRpcEventSource implements EventSource {
     return Number(BigInt(n));
   }
 
-  // ── Fetch one chunk — auto-retry with aggressive halving ──────────────────
+  // ── Fetch one chunk — auto-retry with aggressive halving, yielding per event ─
+  //
+  // Peak memory is bounded by one successfully-fetched sub-chunk (after server
+  // halving). Events are yielded to the consumer as soon as a sub-chunk lands,
+  // so the caller's `for await … await dispatch()` applies true backpressure.
+  // Recursion across a halved remainder uses `yield*` instead of array concat
+  // so no cross-sub-chunk array is ever materialised.
+  //
+  // Returns `true` if the full [fromBlock, toBlock] range was covered (even if
+  // a single dense block was skipped with a warning), `false` only when the
+  // server was completely unresponsive within the 20-attempt budget (thrown).
 
-  private async fetchChunk(
+  private async *fetchChunk(
     fromBlock: number,
     toBlock:   number,
     filters?:  EventSourceFilters,
-  ): Promise<DecodedEvent[]> {
+  ): AsyncIterable<DecodedEvent> {
     let chunkEnd = toBlock;
 
     // Up to 20 attempts: aggressive halving handles blocks with thousands of
@@ -307,11 +318,16 @@ export class OpStreamRpcEventSource implements EventSource {
         const events    = mapBlocksToEvents(blocks, filters);
         const elapsedMs = Date.now() - t0;
         this.onChunkFetched?.({ fromBlock, toBlock: chunkEnd, events: events.length, elapsedMs });
+
+        // Stream this sub-chunk's events immediately — no buffering across the
+        // halved remainder. The consumer's awaited consumption throttles the
+        // inner fetches naturally.
+        for (const event of events) yield event;
+
         if (chunkEnd < toBlock) {
-          const remaining = await this.fetchChunk(chunkEnd + 1, toBlock, filters);
-          return [...events, ...remaining];
+          yield* this.fetchChunk(chunkEnd + 1, toBlock, filters);
         }
-        return events;
+        return;
 
       } catch (err: unknown) {
         // Server returns -32602 when the range exceeds tx/event limits.
@@ -335,7 +351,7 @@ export class OpStreamRpcEventSource implements EventSource {
           // eslint-disable-next-line no-console
           console.warn(`[op-index] OpStreamRpcEventSource: skipping single dense block ${fromBlock} (server limit exceeded)`);
           this.onBlockSkipped?.(fromBlock);
-          return [];
+          return;
         }
 
         // Halve the range and retry
@@ -345,39 +361,24 @@ export class OpStreamRpcEventSource implements EventSource {
     throw new Error(`[OpStreamRpc] could not satisfy server limits for range [${fromBlock}, ${toBlock}] after 20 attempts`);
   }
 
-  // ── query() — parallel chunked backfill ──────────────────────────────────
+  // ── queryStream() — sequential chunked streaming ─────────────────────────
+  //
+  // True streaming: events are yielded as each halved sub-chunk lands inside
+  // fetchChunk. Peak memory is bounded by a single sub-chunk — typically
+  // thousands, not millions, of events — regardless of chunkSize or the
+  // range width. Concurrency > 1 is intentionally not supported here —
+  // ordered streaming without full materialisation requires sequential fetching.
 
-  async query(
+  async *queryStream(
     fromBlock: number,
     toBlock:   number,
     filters?:  EventSourceFilters,
-  ): Promise<DecodedEvent[]> {
-    // Pre-compute all chunk boundaries so we can fetch in parallel while
-    // preserving block-number order in the output.
-    const chunks: Array<{ from: number; to: number }> = [];
+  ): AsyncIterable<DecodedEvent> {
     for (let f = fromBlock; f <= toBlock; ) {
       const end = Math.min(f + this.chunkSize - 1, toBlock);
-      chunks.push({ from: f, to: end });
+      yield* this.fetchChunk(f, end, filters);
       f = end + 1;
     }
-
-    const results: DecodedEvent[][] = new Array<DecodedEvent[]>(chunks.length);
-
-    // Fetch in sliding batches of `concurrency`. Within each batch all requests
-    // fire simultaneously; the next batch starts only after all complete.
-    // Results are stored by index so output order is always fromBlock → toBlock.
-    for (let i = 0; i < chunks.length; i += this.concurrency) {
-      const batch = chunks.slice(i, i + this.concurrency);
-      await Promise.all(
-        batch.map((chunk, j) =>
-          this.fetchChunk(chunk.from, chunk.to, filters).then(events => {
-            results[i + j] = events;
-          }),
-        ),
-      );
-    }
-
-    return results.flat();
   }
 
   // ── subscribe() — WS-first, polling fallback ─────────────────────────────────
@@ -513,15 +514,15 @@ export class OpStreamRpcEventSource implements EventSource {
       try {
         const maxBlock = await this.getLatestBlock();
         if (maxBlock > lastBlock) {
-          const events = await this.query(lastBlock + 1, maxBlock);
-          for (const e of events) {
+          for await (const e of this.queryStream(lastBlock + 1, maxBlock)) {
             if (stopped) return;
             await onEvent(e);
           }
           lastBlock = maxBlock;
         }
-      } catch {
-        // Non-fatal — next tick will retry
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[op-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
       }
       if (!stopped) setTimeout(() => { void poll(); }, intervalMs);
     };

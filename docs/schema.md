@@ -49,6 +49,43 @@ quoted string literals in queries:
 pools(where: { reserve0_gt: "1000000000000000000" }) { items { id reserve0 } }
 ```
 
+> **Rule: use `bigint` for any field decoded from on-chain data.**
+>
+> OPNET contracts encode all numeric fields as `uint256` (32 bytes). Decoded values arrive in
+> handlers as decimal strings via `readU256()` and frequently use large sentinel values — for
+> example Slohm uses `11111111111111111111` to mean "no expiry" or "no limit". Postgres `BIGINT`
+> (the backing type for `int`) has a maximum of ~9.2×10¹⁸; that sentinel exceeds it and causes a
+> fatal crash at runtime.
+>
+> Use `int` only for values that are _provably_ bounded small integers: sequential counters you
+> control, `event.blockNumber`, `Math.floor(event.blockTimestamp / 1000)`. For everything else —
+> anything decoded from a contract — use `bigint`.
+>
+> SQLite's dynamic typing silently accepts any integer, so this crash only appears when running
+> against Postgres. Always smoke-test with Postgres before deploying.
+
+### int and counter arithmetic (Postgres gotcha)
+
+When you read an `int` field back from Postgres, node-postgres returns `BIGINT` columns as
+JavaScript **strings** (to avoid precision loss on values near `Number.MAX_SAFE_INTEGER`). The
+TypeScript `as number` cast is compile-time only — at runtime the value is still a string.
+
+This matters when you increment a counter:
+
+```ts
+// ❌ Wrong — 'as number' doesn't convert at runtime
+//    "11" + 1 = "111"  (string concat, not addition)
+//    After 20 increments: "11111111111111111111" → Postgres BIGINT overflow
+await ctx.store.update('Pool', id, {
+  txCount: (pool['txCount'] as number) + 1,
+});
+
+// ✓ Correct — Number() forces JS numeric conversion
+await ctx.store.update('Pool', id, {
+  txCount: Number(pool['txCount']) + 1,
+});
+```
+
 ### bytes
 
 Store raw binary data (event payloads, hashes). op-index does not automatically hex-encode bytes
