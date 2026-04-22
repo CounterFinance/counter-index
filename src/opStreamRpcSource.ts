@@ -262,11 +262,12 @@ export class OpStreamRpcEventSource implements EventSource {
 
   // ── HTTP JSON-RPC call ──────────────────────────────────────────────────────
 
-  private async rpc<T>(method: string, params: unknown[]): Promise<T> {
+  private async rpc<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
     const resp = await fetch(this.httpUrl, {
       method:  'POST',
       headers: { 'content-type': 'application/json' },
       body:    JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+      signal:  signal ?? AbortSignal.timeout(60_000),
     });
     const json = await resp.json() as { result?: T; error?: { code: number; message: string } };
     if (json.error) {
@@ -519,8 +520,9 @@ export class OpStreamRpcEventSource implements EventSource {
           }
           lastBlock = maxBlock;
         }
-      } catch {
-        // Non-fatal — next tick will retry
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[op-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
       }
       if (!stopped) setTimeout(() => { void poll(); }, intervalMs);
     };
