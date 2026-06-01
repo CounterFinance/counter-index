@@ -478,7 +478,7 @@ export function buildGraphQLSchema(
     name: '_IndexerBlock',
     fields: {
       number:    { type: new GraphQLNonNull(GraphQLInt) },
-      timestamp: { type: GraphQLInt },
+      timestamp: { type: GraphQLString },
     },
   });
 
