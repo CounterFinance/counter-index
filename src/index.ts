@@ -43,6 +43,14 @@ export type {
 
 export type { Decoder, DecodeInput, DecodeResult } from './decoder.js';
 
+// --- EVM adapter (optional; requires peer dep `viem`) ----------------------
+export {
+  EvmAbiDecoder,
+  EvmLogSource,
+  type EvmLogSourceOptions,
+  type EvmChainMeta,
+} from './chains/evm/index.js';
+
 // --- OPNET adapter ---------------------------------------------------------
 // Re-exported at the top level for convenience; the canonical path is
 // '@opnet-collective/op-index/chains/opnet'.
