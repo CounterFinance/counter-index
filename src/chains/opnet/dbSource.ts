@@ -8,7 +8,7 @@
 import type { MinimalDbAdapter } from '../../adapter.js';
 import type { ChainEvent } from '../../types.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
-import { decodeEvent } from './decoders.js';
+import { opnetDecoder } from './opnetDecoder.js';
 import { normaliseFromAddress } from './p2op.js';
 import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
 import type { OpnetChainMeta } from './types.js';
@@ -106,7 +106,7 @@ function rowToEvent(
   // OpStream stores raw bytes only — decoding happens here, at read time, via the
   // OPNET decoder registry. Adding a new decoder instantly applies to all
   // historical events without any rewrite of the OpStream archive.
-  const decoded = decodeEvent(row.event_name, rawData);
+  const decoded = opnetDecoder.decode({ raw: rawData, eventName: row.event_name })?.decoded ?? null;
   const { address: fromAddress, pubkeyHex: fromAddressPubkey } =
     normaliseFromAddress(row.from_address);
 

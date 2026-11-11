@@ -41,6 +41,8 @@ export type {
   ChainMeta,
 } from './types.js';
 
+export type { Decoder, DecodeInput, DecodeResult } from './decoder.js';
+
 // --- OPNET adapter ---------------------------------------------------------
 // Re-exported at the top level for convenience; the canonical path is
 // '@opnet-collective/op-index/chains/opnet'.
@@ -62,6 +64,7 @@ export {
   type CreateEventSourceOptions,
   decodeEvent, registerDecoder, DECODER_REGISTRY,
   type EventDecoder,
+  OpnetDecoder, opnetDecoder,
   OP20_EVENT_NAMES, OP721_EVENT_NAMES,
   isOP20Contract, isOP721Contract, classifyContract,
   type OP20EventName, type OP721EventName,

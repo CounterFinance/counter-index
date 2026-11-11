@@ -19,7 +19,7 @@ import WebSocket from 'ws';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
 import type { ChainEvent } from '../../types.js';
 import type { WsEventSourceOptions } from './wsSource.js';
-import { decodeEvent } from './decoders.js';
+import { opnetDecoder } from './opnetDecoder.js';
 import { normaliseFromAddress } from './p2op.js';
 import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
 import type { OpnetChainMeta } from './types.js';
@@ -195,7 +195,7 @@ function mapBlocksToEvents(
           contractAddress: ev.contractAddress,
           eventName:       ev.type,
           eventRaw,
-          decoded:         decodeEvent(ev.type, eventRaw),
+          decoded:         opnetDecoder.decode({ raw: eventRaw, eventName: ev.type })?.decoded ?? null,
           dataLength:      eventRaw.length,
           txEvents,
           chainMeta: {
@@ -232,7 +232,7 @@ function wsEventToDecoded(raw: OpStreamWebhookEvent): ChainEvent {
     contractAddress: raw.contractAddress,
     eventName:       raw.eventName,
     eventRaw,
-    decoded:         decodeEvent(raw.eventName, eventRaw),
+    decoded:         opnetDecoder.decode({ raw: eventRaw, eventName: raw.eventName })?.decoded ?? null,
     dataLength:      raw.dataLength ?? eventRaw.length,
     chainMeta: {
       kind:              'opnet',

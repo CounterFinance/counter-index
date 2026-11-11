@@ -19,7 +19,7 @@
 
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
 import type { ChainEvent } from '../../types.js';
-import { decodeEvent } from './decoders.js';
+import { opnetDecoder } from './opnetDecoder.js';
 import { normaliseFromAddress } from './p2op.js';
 import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
 import type { OpnetChainMeta } from './types.js';
@@ -152,7 +152,7 @@ function extractEvents(
           contractAddress: contractAddr,
           eventName:       evt.type,
           eventRaw:        rawData,
-          decoded:         decodeEvent(evt.type, rawData),
+          decoded:         opnetDecoder.decode({ raw: rawData, eventName: evt.type })?.decoded ?? null,
           dataLength:      rawData.length,
           txEvents,
           chainMeta: {
