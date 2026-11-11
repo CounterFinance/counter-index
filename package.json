@@ -31,7 +31,8 @@
     "test:watch": "vitest",
     "prepublishOnly": "npm run build && npm run lint && npm test",
     "dogfood": "tsx dogfood/run.ts",
-    "typecheck": "tsc -p tsconfig.typecheck.json"
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "dogfood:evm": "tsx dogfood/evm-anvil.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -43,6 +44,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.58.2",
+    "viem": "^2.21.55",
     "vitest": "^1.6.0",
     "ws": "^8.20.0"
   },
@@ -54,13 +56,17 @@
   },
   "peerDependencies": {
     "graphql-ws": "^6.0.0",
-    "ws": "^8.0.0"
+    "ws": "^8.0.0",
+    "viem": "^2.21.0"
   },
   "peerDependenciesMeta": {
     "graphql-ws": {
       "optional": true
     },
     "ws": {
+      "optional": true
+    },
+    "viem": {
       "optional": true
     }
   }

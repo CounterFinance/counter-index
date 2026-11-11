@@ -1,0 +1,5 @@
+# forge build junk — the compiled artifact (out/MiniToken.sol/MiniToken.json) is
+# committed so `npm run dogfood:evm` works without re-running forge build.
+cache/
+broadcast/
+out/build-info/
