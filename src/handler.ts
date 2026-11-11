@@ -13,17 +13,18 @@
  *   });
  */
 
-import type { EntityStore } from './store.js';
+import type { TypedStore } from './store.js';
+import type { SchemaDefinition } from './schema.js';
 import type { ChainEvent } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Context passed to every event handler. */
-export interface HandlerContext {
-  /** The entity store — read and write indexed data here. */
-  store: EntityStore;
+/** Context passed to every event handler. Store is typed by the schema. */
+export interface HandlerContext<S extends SchemaDefinition = SchemaDefinition> {
+  /** The schema-typed entity store — read and write indexed data here. */
+  store: TypedStore<S>;
   /** Block number of the current event. */
   block: number;
   /** Unix timestamp of the block. Undefined when source doesn't provide it. */
@@ -31,19 +32,20 @@ export interface HandlerContext {
 }
 
 /** An event handler function. May be async. */
-export type EventHandler = (event: ChainEvent, context: HandlerContext) => Promise<void> | void;
+export type EventHandler<S extends SchemaDefinition = SchemaDefinition> =
+  (event: ChainEvent, context: HandlerContext<S>) => Promise<void> | void;
 
 /**
  * Context passed to every block handler.
  * Fires once per block, after all event handlers for that block have run.
  */
-export interface BlockContext {
+export interface BlockContext<S extends SchemaDefinition = SchemaDefinition> {
   /** The block number that just finished processing. */
   blockNumber: number;
   /** Unix timestamp of the block. Undefined when source doesn't provide it. */
   blockTimestamp: number | undefined;
-  /** The entity store — read and write indexed data here. */
-  store: EntityStore;
+  /** The schema-typed entity store — read and write indexed data here. */
+  store: TypedStore<S>;
 }
 
 /**
@@ -58,7 +60,8 @@ export interface BlockContext {
  * Note: only fires for blocks that contain at least one indexed event.
  * Blocks with zero events are not observed by the block handler.
  */
-export type BlockHandler = (context: BlockContext) => Promise<void> | void;
+export type BlockHandler<S extends SchemaDefinition = SchemaDefinition> =
+  (context: BlockContext<S>) => Promise<void> | void;
 
 // ---------------------------------------------------------------------------
 // Handler registry
