@@ -23,7 +23,7 @@
 import WebSocket from 'ws';
 import type { EventSource, UnsubscribeFn } from '../../source.js';
 import type { ChainEvent } from '../../types.js';
-import { decodeEvent } from './decoders.js';
+import { opnetDecoder } from './opnetDecoder.js';
 import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
 import type { OpnetChainMeta } from './types.js';
 
@@ -83,7 +83,7 @@ function toChainEvent(raw: OpStreamWebhookEvent): ChainEvent {
   // OpStream broadcasts raw event bytes only — decoding lives entirely in op-index's
   // DECODER_REGISTRY and is applied at read time. Adding a new decoder instantly
   // applies to subsequent broadcasts with no OpStream change.
-  const decoded = decodeEvent(raw.eventName, eventRaw);
+  const decoded = opnetDecoder.decode({ raw: eventRaw, eventName: raw.eventName })?.decoded ?? null;
 
   return {
     chainId:         OPNET_CHAIN_ID,

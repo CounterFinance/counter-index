@@ -34,6 +34,8 @@ export {
   type EventDecoder,
 } from './decoders.js';
 
+export { OpnetDecoder, opnetDecoder } from './opnetDecoder.js';
+
 export {
   OP20_EVENT_NAMES, OP721_EVENT_NAMES,
   isOP20Contract, isOP721Contract, classifyContract,
