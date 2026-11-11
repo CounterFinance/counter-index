@@ -20,7 +20,7 @@
 
 import type { Schema, SchemaDefinition } from './schema.js';
 import type { TypedStore } from './store.js';
-import { createStore } from './store.js';
+import { createStore, scopeStoreToChain } from './store.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
 import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerContext, type BlockContext } from './handler.js';
@@ -144,20 +144,28 @@ export async function createIndexer<S extends SchemaDefinition>(
   // The runtime store is the untyped EntityStore; the public API (handler
   // contexts, indexer.store) presents it as the schema-typed TypedStore<S>.
   const typedStore = store as unknown as TypedStore<S>;
+  const multichain = config.schema.multichain;
+  // Chain of the block currently being processed — stamped by dispatch(), read
+  // by dispatchBlock() for per-chain block context + checkpoint (multichain).
+  let currentChainId = 0;
+
+  const scopedStore = (chainId: number): TypedStore<S> =>
+    multichain ? (scopeStoreToChain(store, chainId) as unknown as TypedStore<S>) : typedStore;
 
   function makeContext(event: ChainEvent): HandlerContext<S> {
     return {
-      store: typedStore,
+      store: scopedStore(event.chainId),
       block: event.blockNumber,
       blockTimestamp: event.blockTimestamp,
     };
   }
 
   function makeBlockContext(blockNumber: number, blockTimestamp: number | undefined): BlockContext<S> {
-    return { blockNumber, blockTimestamp, store: typedStore };
+    return { blockNumber, blockTimestamp, store: scopedStore(currentChainId) };
   }
 
   async function dispatch(event: ChainEvent): Promise<void> {
+    currentChainId = event.chainId;
     stats.eventsProcessed++;
     if (event.blockNumber > stats.lastBlock) {
       stats.lastBlock = event.blockNumber;
@@ -199,7 +207,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     const t0 = Date.now();
     await config.sink.transaction(async () => {
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
-      await store.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp);
+      await store.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, multichain ? currentChainId : undefined);
     });
     return Date.now() - t0;
   }
@@ -325,7 +333,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       // no matching events — ensures _meta.block.number means "scanned up to here".
       if (currentBlock !== toBlock) {
         await config.sink.transaction(async () => {
-          await store.writeBlockCheckpoint(toBlock, knownTip, currentTimestamp);
+          await store.writeBlockCheckpoint(toBlock, knownTip, currentTimestamp, multichain ? currentChainId : undefined);
         });
       }
 

@@ -69,13 +69,50 @@ export interface EntityStore {
    * opindex_meta.last_block only advances when every entity write for the block
    * has committed — making the meta value safe to resume from.
    */
-  writeBlockCheckpoint(blockNumber: number, tipBlock?: number, blockTimestamp?: number): Promise<void>;
+  writeBlockCheckpoint(blockNumber: number, tipBlock?: number, blockTimestamp?: number, chainId?: number): Promise<void>;
 
   /**
    * Read the current indexed checkpoint from opindex_meta.
    * Returns undefined if no block has been checkpointed yet.
    */
-  readCheckpoint(): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
+  readCheckpoint(chainId?: number): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
+}
+
+/** Checkpoint meta-row id: a global singleton, or one row per chain in multichain mode. */
+function checkpointId(chainId?: number): string {
+  return chainId === undefined ? 'singleton' : `chain:${chainId}`;
+}
+
+/**
+ * Wrap a store so every call is scoped to one chain: writes stamp `chainId` and
+ * namespace the id as `<chainId>:<id>`; reads unwrap the id and filter to the
+ * chain; checkpoints key per chain. Used by the indexer for multichain schemas.
+ * The underlying physical store is shared across chains.
+ */
+export function scopeStoreToChain(base: EntityStore, chainId: number): EntityStore {
+  const prefix = `${chainId}:`;
+  const key = (id: string): string => `${prefix}${id}`;
+  const unkey = (id: string): string => (id.startsWith(prefix) ? id.slice(prefix.length) : id);
+  const strip = (row: Record<string, unknown> | undefined): Record<string, unknown> | undefined =>
+    row ? { ...row, id: unkey(row['id'] as string) } : undefined;
+  const mine = (row: Record<string, unknown>): boolean => Number(row['chainId']) === chainId;
+
+  return {
+    async get(entity, id) { return strip(await base.get(entity, key(id))); },
+    async set(entity, id, data) { return base.set(entity, key(id), { ...data, chainId }); },
+    async update(entity, id, partial) { return base.update(entity, key(id), partial); },
+    async delete(entity, id) { return base.delete(entity, key(id)); },
+    async list(entity) { return (await base.list(entity)).filter(mine).map((r) => strip(r)!); },
+    async count(entity) { return (await base.list(entity)).filter(mine).length; },
+    async find(entity, predicate) {
+      return (await base.list(entity)).filter(mine).map((r) => strip(r)!).filter(predicate);
+    },
+    onChange(handler) { return base.onChange(handler); },
+    writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp) {
+      return base.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId);
+    },
+    readCheckpoint() { return base.readCheckpoint(chainId); },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,12 +462,13 @@ export async function createStore(
       return () => { changeHandlers.delete(handler); };
     },
 
-    async writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp) {
+    async writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId) {
       const now = Date.now();
+      const metaId = checkpointId(chainId);
       if (dialect === 'sqlite') {
         await adapter.run(
           `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
-          ['singleton', blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+          [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
         );
       } else {
         await adapter.run(
@@ -441,15 +479,15 @@ export async function createStore(
              tip_block     = EXCLUDED.tip_block,
              last_block_ts = EXCLUDED.last_block_ts,
              updated_at    = EXCLUDED.updated_at`,
-          ['singleton', blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+          [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
         );
       }
     },
 
-    async readCheckpoint() {
+    async readCheckpoint(chainId) {
       const row = await adapter.get<{ last_block: number; tip_block: number | null; last_block_ts: number | null }>(
         `SELECT last_block, tip_block, last_block_ts FROM opindex_meta WHERE id = ${param(dialect, 1)}`,
-        ['singleton'],
+        [checkpointId(chainId)],
       );
       if (!row) return undefined;
       return {
