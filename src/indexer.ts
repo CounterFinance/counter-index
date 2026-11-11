@@ -19,7 +19,7 @@
  */
 
 import type { Schema, SchemaDefinition } from './schema.js';
-import type { EntityStore } from './store.js';
+import type { TypedStore } from './store.js';
 import { createStore } from './store.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
@@ -50,9 +50,9 @@ export interface IndexerStats {
   lastBlock: number;
 }
 
-export interface Indexer {
+export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
   /** Register a handler for an event name. Use '*' for all events. */
-  on(eventName: string, handler: EventHandler): void;
+  on(eventName: string, handler: EventHandler<S>): void;
 
   /**
    * Register a block handler. Fires once per block after all event handlers
@@ -65,7 +65,7 @@ export interface Indexer {
    *     await store.set('Candle', String(blockNumber), { close: currentPrice, ... });
    *   });
    */
-  onBlock(handler: BlockHandler): void;
+  onBlock(handler: BlockHandler<S>): void;
 
   /** Process a single decoded event through all matching handlers. */
   processEvent(event: ChainEvent): Promise<void>;
@@ -96,7 +96,7 @@ export interface Indexer {
   ): UnsubscribeFn;
 
   /** The entity store — query op-index's derived tables here. */
-  readonly store: EntityStore;
+  readonly store: TypedStore<S>;
 
   /** Processing statistics. */
   readonly stats: IndexerStats;
@@ -129,7 +129,7 @@ export type { ServeOptions, ServeHandle };
 
 export async function createIndexer<S extends SchemaDefinition>(
   config: IndexerConfig<S>,
-): Promise<Indexer> {
+): Promise<Indexer<S>> {
   const log = config.logger ?? noopLogger;
   const store = await createStore(config.schema, config.sink, log);
   const registry = new HandlerRegistry();
@@ -141,16 +141,20 @@ export async function createIndexer<S extends SchemaDefinition>(
     lastBlock: 0,
   };
 
-  function makeContext(event: ChainEvent): HandlerContext {
+  // The runtime store is the untyped EntityStore; the public API (handler
+  // contexts, indexer.store) presents it as the schema-typed TypedStore<S>.
+  const typedStore = store as unknown as TypedStore<S>;
+
+  function makeContext(event: ChainEvent): HandlerContext<S> {
     return {
-      store,
+      store: typedStore,
       block: event.blockNumber,
       blockTimestamp: event.blockTimestamp,
     };
   }
 
-  function makeBlockContext(blockNumber: number, blockTimestamp: number | undefined): BlockContext {
-    return { blockNumber, blockTimestamp, store };
+  function makeBlockContext(blockNumber: number, blockTimestamp: number | undefined): BlockContext<S> {
+    return { blockNumber, blockTimestamp, store: typedStore };
   }
 
   async function dispatch(event: ChainEvent): Promise<void> {
@@ -172,7 +176,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     });
     // TRACE: per-handler timing — only computed when log is trace-enabled.
     const t0 = Date.now();
-    await registry.dispatch(event, makeContext(event));
+    await registry.dispatch(event, makeContext(event) as HandlerContext);
     log.trace('handler', 'dispatched', {
       event:      event.eventName,
       block:      event.blockNumber,
@@ -194,7 +198,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     stats.blocksProcessed++;
     const t0 = Date.now();
     await config.sink.transaction(async () => {
-      await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp));
+      await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
       await store.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp);
     });
     return Date.now() - t0;
@@ -211,11 +215,11 @@ export async function createIndexer<S extends SchemaDefinition>(
 
   return {
     on(eventName, handler) {
-      registry.on(eventName, handler);
+      registry.on(eventName, handler as EventHandler);
     },
 
     onBlock(handler) {
-      registry.onBlock(handler);
+      registry.onBlock(handler as BlockHandler);
     },
 
     async processEvent(event) {
@@ -372,7 +376,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     },
 
     get store() {
-      return store;
+      return typedStore;
     },
 
     get stats() {

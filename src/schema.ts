@@ -92,7 +92,7 @@ function validateSchema(def: SchemaDefinition): void {
  * });
  * ```
  */
-export function defineSchema<S extends SchemaDefinition>(def: S): Schema<S> {
+export function defineSchema<const S extends SchemaDefinition>(def: S): Schema<S> {
   validateSchema(def);
 
   return {
