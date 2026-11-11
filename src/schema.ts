@@ -40,10 +40,21 @@ export type SchemaDefinition = Record<string, EntityDef>;
  */
 export interface Schema<S extends SchemaDefinition = SchemaDefinition> {
   readonly entities: S;
+  /** True when this schema indexes multiple chains (adds a `chainId` dimension). */
+  readonly multichain: boolean;
   /** List entity names. */
   entityNames(): string[];
   /** Get field definitions for an entity. Throws if unknown. */
   getEntity(name: string): EntityDef;
+}
+
+export interface DefineSchemaOptions {
+  /**
+   * Index multiple chains into one schema. Each entity gains a `chainId` column,
+   * entity ids are namespaced per chain, and GraphQL exposes `chainId` as a
+   * filterable field. Use with `createMultiIndexer`.
+   */
+  multichain?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,18 +103,38 @@ function validateSchema(def: SchemaDefinition): void {
  * });
  * ```
  */
-export function defineSchema<const S extends SchemaDefinition>(def: S): Schema<S> {
+export function defineSchema<const S extends SchemaDefinition>(
+  def: S,
+  options?: DefineSchemaOptions,
+): Schema<S> {
   validateSchema(def);
+  const multichain = options?.multichain ?? false;
+
+  // In multichain mode each entity gets an implicit `chainId` column. The
+  // compile-time type stays `S` (handlers never set chainId — the scoped store
+  // stamps it), but the runtime entities carry the extra field so the store
+  // persists it and GraphQL exposes it as a filter.
+  const entities = (multichain ? augmentMultichain(def) : def) as S;
 
   return {
-    entities: def,
+    entities,
+    multichain,
     entityNames() {
-      return Object.keys(def);
+      return Object.keys(entities);
     },
     getEntity(name: string): EntityDef {
-      const entity = def[name];
+      const entity = entities[name];
       if (!entity) throw new Error(`Unknown entity: "${name}"`);
       return entity;
     },
   };
+}
+
+/** Prepend a `chainId` int field to every entity (multichain mode). */
+function augmentMultichain(def: SchemaDefinition): SchemaDefinition {
+  const out: SchemaDefinition = {};
+  for (const [name, fields] of Object.entries(def)) {
+    out[name] = { chainId: { type: 'int' }, ...fields };
+  }
+  return out;
 }
