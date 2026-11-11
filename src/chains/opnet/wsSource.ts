@@ -2,7 +2,7 @@
  * WsEventSource — Tier 2 EventSource backed by OpStream's WebSocket broadcast.
  *
  * OpStream streams fully-enriched events over a plain RFC 6455 WebSocket. This
- * source connects to that feed and delivers `DecodedEvent` objects with
+ * source connects to that feed and delivers `ChainEvent` objects with
  * sub-second latency — no DB or RPC calls required.
  *
  * Limitations:
@@ -21,9 +21,11 @@
  */
 
 import WebSocket from 'ws';
-import type { EventSource, UnsubscribeFn } from './source.js';
-import type { DecodedEvent } from './types.js';
-import { decodeEvent } from './decoders/eventDecoders.js';
+import type { EventSource, UnsubscribeFn } from '../../source.js';
+import type { ChainEvent } from '../../types.js';
+import { decodeEvent } from './decoders.js';
+import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
+import type { OpnetChainMeta } from './types.js';
 
 // ---------------------------------------------------------------------------
 // OpStream WebhookEvent wire format (15 enriched fields)
@@ -75,7 +77,7 @@ function hexToUint8Array(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(padded, 'hex'));
 }
 
-function toDecodedEvent(raw: OpStreamWebhookEvent): DecodedEvent {
+function toChainEvent(raw: OpStreamWebhookEvent): ChainEvent {
   const eventRaw = hexToUint8Array(raw.eventRaw);
 
   // OpStream broadcasts raw event bytes only — decoding lives entirely in op-index's
@@ -84,21 +86,27 @@ function toDecodedEvent(raw: OpStreamWebhookEvent): DecodedEvent {
   const decoded = decodeEvent(raw.eventName, eventRaw);
 
   return {
+    chainId:         OPNET_CHAIN_ID,
+    network:         OPNET_NETWORK,
     blockNumber:     raw.blockNumber,
+    blockHash:       '',
+    blockTimestamp:  raw.blockTimestamp,
     txHash:          raw.txHash,
+    txIndex:         raw.txIndex,
+    logIndex:        raw.logIndex,
     contractAddress: raw.contractAddress,
     eventName:       raw.eventName,
     eventRaw,
     decoded,
     dataLength:      raw.dataLength ?? eventRaw.length,
-    logIndex:        raw.logIndex,
-    blockTimestamp:  raw.blockTimestamp,
-    txIndex:         raw.txIndex,
-    fromAddress:     raw.fromAddress ?? undefined,
-    gasUsed:         raw.gasUsed != null ? BigInt(raw.gasUsed) : undefined,
-    burnedBitcoin:   raw.burnedBitcoin != null ? BigInt(raw.burnedBitcoin) : undefined,
-    failed:          raw.failed,
-    revertReason:    raw.revertReason ?? undefined,
+    chainMeta: {
+      kind:          'opnet',
+      fromAddress:   raw.fromAddress ?? undefined,
+      gasUsed:       raw.gasUsed != null ? BigInt(raw.gasUsed) : undefined,
+      burnedBitcoin: raw.burnedBitcoin != null ? BigInt(raw.burnedBitcoin) : undefined,
+      failed:        raw.failed,
+      revertReason:  raw.revertReason ?? undefined,
+    } as OpnetChainMeta,
   };
 }
 
@@ -114,7 +122,7 @@ export class WsEventSource implements EventSource {
   ) {}
 
   // eslint-disable-next-line require-yield
-  async *queryStream(): AsyncIterable<DecodedEvent> {
+  async *queryStream(): AsyncIterable<ChainEvent> {
     throw new Error(
       '[op-index] WsEventSource is live-only — use DbEventSource for historical backfill.',
     );
@@ -122,7 +130,7 @@ export class WsEventSource implements EventSource {
 
   subscribe(
     fromBlock: number,
-    onEvent: (e: DecodedEvent) => Promise<void>,
+    onEvent: (e: ChainEvent) => Promise<void>,
   ): UnsubscribeFn {
     let stopped = false;
     let ws: WebSocket | null = null;
@@ -164,7 +172,7 @@ export class WsEventSource implements EventSource {
           const params = msg['params'] as Record<string, unknown> | undefined;
           const raw = params?.['result'] as OpStreamWebhookEvent | undefined;
           if (raw && typeof raw.blockNumber === 'number' && raw.blockNumber >= fromBlock && raw.eventRaw) {
-            void onEvent(toDecodedEvent(raw));
+            void onEvent(toChainEvent(raw));
           }
           return;
         }
@@ -175,7 +183,7 @@ export class WsEventSource implements EventSource {
         // Path 3: legacy plain WebhookEvent (old OpStream without subscription support)
         const raw = parsed as OpStreamWebhookEvent;
         if (typeof raw.blockNumber === 'number' && raw.blockNumber >= fromBlock && raw.eventRaw) {
-          void onEvent(toDecodedEvent(raw));
+          void onEvent(toChainEvent(raw));
         }
       });
 

@@ -3,8 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { RpcEventSource, type BlockLike, type BlockProvider } from '../src/rpcSource.js';
-import { registerDecoder } from '../src/decoders/eventDecoders.js';
+import type { OpnetChainMeta } from '../src/chains/opnet/types.js';
+import { RpcEventSource, type BlockLike, type BlockProvider } from '../src/chains/opnet/rpcSource.js';
+import { registerDecoder } from '../src/chains/opnet/decoders.js';
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
@@ -185,10 +186,10 @@ describe('RpcEventSource.query', () => {
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
     const events = await collect(source.queryStream(100, 100));
     // '0xsender' is not a 32-byte hex pubkey — passes through unchanged
-    expect(events[0]!.fromAddress).toBe('0xsender');
-    expect(events[0]!.fromAddressPubkey).toBeUndefined();
-    expect(events[0]!.gasUsed).toBe(21000n);
-    expect(events[0]!.failed).toBe(false);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddress).toBe('0xsender');
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddressPubkey).toBeUndefined();
+    expect((events[0]!.chainMeta as OpnetChainMeta).gasUsed).toBe(21000n);
+    expect((events[0]!.chainMeta as OpnetChainMeta).failed).toBe(false);
     expect(events[0]!.blockTimestamp).toBe(1712340000);
   });
 
@@ -203,8 +204,8 @@ describe('RpcEventSource.query', () => {
     ]);
     const source = new RpcEventSource(makeProvider(blocks), { rpsLimit: 1000 });
     const events = await collect(source.queryStream(100, 100));
-    expect(events[0]!.fromAddress).toMatch(/^op1/);
-    expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddress).toMatch(/^op1/);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddressPubkey).toBe(HEX_PUBKEY);
   });
 
   it('populates txEvents with all sibling events in the same tx', async () => {

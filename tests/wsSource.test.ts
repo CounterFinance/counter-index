@@ -3,10 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { OpnetChainMeta } from '../src/chains/opnet/types.js';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
-import { WsEventSource } from '../src/wsSource.js';
-import { registerDecoder, DECODER_REGISTRY } from '../src/decoders/eventDecoders.js';
+import { WsEventSource } from '../src/chains/opnet/wsSource.js';
+import { registerDecoder, DECODER_REGISTRY } from '../src/chains/opnet/decoders.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -110,7 +111,7 @@ describe('WsEventSource', () => {
 
   // ── subscribe() — basic delivery ─────────────────────────────────────────
 
-  it('delivers a well-formed DecodedEvent to onEvent', async () => {
+  it('delivers a well-formed ChainEvent to onEvent', async () => {
     const source = new WsEventSource(url);
     const received: object[] = [];
 
@@ -220,8 +221,8 @@ describe('WsEventSource', () => {
     let burned: unknown;
 
     const stop = source.subscribe(1, async (e) => {
-      gas    = e.gasUsed;
-      burned = e.burnedBitcoin;
+      gas    = (e.chainMeta as OpnetChainMeta).gasUsed;
+      burned = (e.chainMeta as OpnetChainMeta).burnedBitcoin;
     });
 
     await new Promise((r) => setTimeout(r, 30));

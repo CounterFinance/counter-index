@@ -32,10 +32,10 @@
  *   const source = await createEventSource({ rpc: provider });
  */
 
-import type { MinimalDbAdapter } from './adapter.js';
-import { openSqlite } from './adapter.js';
-import type { EventSource } from './source.js';
-import { DbEventSource } from './source.js';
+import type { MinimalDbAdapter } from '../../adapter.js';
+import { openSqlite } from '../../adapter.js';
+import type { EventSource } from '../../source.js';
+import { DbEventSource } from './dbSource.js';
 import type { BlockProvider, RpcEventSourceOptions } from './rpcSource.js';
 import { RpcEventSource } from './rpcSource.js';
 import { WsEventSource, type WsEventSourceOptions } from './wsSource.js';

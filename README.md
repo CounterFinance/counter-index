@@ -1,8 +1,13 @@
 # op-index
 
-Indexer framework for [OPNET](https://opnet.org) (Bitcoin L1). Define a schema, handle chain
-events, persist derived state to SQLite or Postgres, and serve it over a GraphQL API with
-cursor pagination and live subscriptions — all auto-generated from your schema, zero codegen.
+Chain-neutral indexer framework. Define a schema, handle chain events, persist derived state
+to SQLite or Postgres, and serve it over a GraphQL API with cursor pagination and live
+subscriptions — all auto-generated from your schema, zero codegen.
+
+The core engine is chain-agnostic; each chain ships as a source adapter under
+`src/chains/<chain>`. [OPNET](https://opnet.org) (Bitcoin L2) is the first adapter; EVM and
+Solana adapters are on the [roadmap](docs/multichain-roadmap.md). All chain-specific context
+(addresses, gas, revert reasons) lives under a ChainEvent's `chainMeta`, keyed by `kind`.
 
 ```
   OpStream DB --> DbEventSource   ‾‾‾‾‾‾‾‾\

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { OPNET_NATIVE_TOKENS, getNativeToken, isNativeToken } from '../src/tokens.js';
+import { OPNET_NATIVE_TOKENS, getNativeToken, isNativeToken } from '../src/chains/opnet/tokens.js';
 
 describe('OPNET_NATIVE_TOKENS', () => {
   it('contains BTC and MOTO', () => {
