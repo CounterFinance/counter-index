@@ -29,7 +29,8 @@
     "lint:fix": "eslint src --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build && npm run lint && npm test"
+    "prepublishOnly": "npm run build && npm run lint && npm test",
+    "dogfood": "tsx dogfood/run.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

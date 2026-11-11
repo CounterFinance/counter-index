@@ -6,14 +6,14 @@ import { describe, it, expect } from 'vitest';
 import {
   isOP20Contract, isOP721Contract, classifyContract,
   OP20_EVENT_NAMES, OP721_EVENT_NAMES,
-} from '../src/standards.js';
-import type { DecodedEvent } from '../src/types.js';
+} from '../src/chains/opnet/standards.js';
+import type { ChainEvent } from '../src/types.js';
 
 function makeEvent(
   contractAddress: string,
   eventName: string,
-  overrides: Partial<DecodedEvent> = {},
-): DecodedEvent {
+  overrides: Partial<ChainEvent> = {},
+): ChainEvent {
   return {
     blockNumber: 100,
     txHash: '0xtx',

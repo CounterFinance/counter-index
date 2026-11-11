@@ -13,7 +13,7 @@
  * relies on ApprovalForAll as the unambiguous discriminator.
  */
 
-import type { DecodedEvent } from './types.js';
+import type { ChainEvent } from '../../types.js';
 
 // ---------------------------------------------------------------------------
 // Standard event name sets
@@ -38,7 +38,7 @@ export type OP721EventName = (typeof OP721_EVENT_NAMES)[number];
  */
 export function isOP20Contract(
   contractAddress: string,
-  events: DecodedEvent[],
+  events: ChainEvent[],
 ): boolean {
   const op20Set = new Set<string>(OP20_EVENT_NAMES);
   return events.some(
@@ -52,7 +52,7 @@ export function isOP20Contract(
  */
 export function isOP721Contract(
   contractAddress: string,
-  events: DecodedEvent[],
+  events: ChainEvent[],
 ): boolean {
   return events.some(
     (e) => e.contractAddress === contractAddress && e.eventName === 'ApprovalForAll',
@@ -66,7 +66,7 @@ export function isOP721Contract(
  */
 export function classifyContract(
   contractAddress: string,
-  events: DecodedEvent[],
+  events: ChainEvent[],
 ): 'op721' | 'op20' | 'unknown' {
   if (isOP721Contract(contractAddress, events)) return 'op721';
   if (isOP20Contract(contractAddress, events))  return 'op20';

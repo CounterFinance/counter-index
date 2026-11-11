@@ -6,9 +6,10 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { OpnetChainMeta } from '../src/chains/opnet/types.js';
 import Database from 'better-sqlite3';
 import { SqliteAdapter } from '../src/adapter.js';
-import { DbEventSource } from '../src/source.js';
+import { DbEventSource } from '../src/chains/opnet/dbSource.js';
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
@@ -130,11 +131,11 @@ describe('DbEventSource.query', () => {
   it('populates fromAddress and gasUsed from transactions JOIN', async () => {
     const events = await collect(source.queryStream(100, 100));
     // '0xalice' is not a 32-byte hex pubkey — passes through unchanged
-    expect(events[0]!.fromAddress).toBe('0xalice');
-    expect(events[0]!.fromAddressPubkey).toBeUndefined();
-    expect(events[0]!.gasUsed).toBe(21000n);
-    expect(events[0]!.burnedBitcoin).toBe(500n);
-    expect(events[0]!.failed).toBe(false);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddress).toBe('0xalice');
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddressPubkey).toBeUndefined();
+    expect((events[0]!.chainMeta as OpnetChainMeta).gasUsed).toBe(21000n);
+    expect((events[0]!.chainMeta as OpnetChainMeta).burnedBitcoin).toBe(500n);
+    expect((events[0]!.chainMeta as OpnetChainMeta).failed).toBe(false);
   });
 
   it('normalises a 32-byte hex pubkey from_address to bech32m fromAddress', async () => {
@@ -150,14 +151,14 @@ describe('DbEventSource.query', () => {
       .run(200, '0xtx_pub', '0xtoken', 'Transferred', 0, new Uint8Array(0), 0);
     const src2 = new DbEventSource(new SqliteAdapter(db2));
     const events = await collect(src2.queryStream(200, 200));
-    expect(events[0]!.fromAddress).toMatch(/^op1/);
-    expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddress).toMatch(/^op1/);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddressPubkey).toBe(HEX_PUBKEY);
   });
 
   it('populates failed=true and revertReason for failed tx', async () => {
     const events = await collect(source.queryStream(101, 101, { contract: '0xtoken2' }));
-    expect(events[0]!.failed).toBe(true);
-    expect(events[0]!.revertReason).toBe('insufficient balance');
+    expect((events[0]!.chainMeta as OpnetChainMeta).failed).toBe(true);
+    expect((events[0]!.chainMeta as OpnetChainMeta).revertReason).toBe('insufficient balance');
   });
 
   it('populates txEvents with sibling events from the same tx', async () => {

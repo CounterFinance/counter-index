@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { pubkeyHexToP2op, isP2opAddress, normaliseFromAddress } from '../src/p2op.js';
+import { pubkeyHexToP2op, isP2opAddress, normaliseFromAddress } from '../src/chains/opnet/p2op.js';
 
 // ---------------------------------------------------------------------------
 // pubkeyHexToP2op

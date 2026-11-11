@@ -1,11 +1,13 @@
 /**
- * @opnet-collective/op-index — Indexer framework for OPNET.
+ * @opnet-collective/op-index — chain-neutral indexer framework.
  *
- * Define a schema. Register event handlers. Feed chain data via sync() or subscribe().
- * Query your indexed entities from the DB op-index manages.
+ * Define a schema. Register event handlers. Feed chain data from a source
+ * adapter via sync() or subscribe(). Query your indexed entities over an
+ * auto-generated GraphQL API. The core is chain-neutral; each chain ships as an
+ * adapter under `./chains/<chain>`. OPNET is the first adapter.
  */
 
-// --- Core framework --------------------------------------------------------
+// --- Core framework (chain-neutral) ----------------------------------------
 
 export { defineSchema, type Schema, type SchemaDefinition, type EntityDef, type FieldDef, type FieldType } from './schema.js';
 export { type EntityStore, type StoreChangeEvent } from './store.js';
@@ -24,69 +26,48 @@ export {
   openPostgres,
 } from './adapter.js';
 
-// --- Event source ----------------------------------------------------------
+// --- Event source interface (implementations live in chain adapters) -------
 
 export {
-  DbEventSource,
   type EventSource,
   type EventSourceFilters,
   type UnsubscribeFn,
 } from './source.js';
 
+// --- Core types ------------------------------------------------------------
+
+export type {
+  ChainEvent,
+  ChainMeta,
+} from './types.js';
+
+// --- OPNET adapter ---------------------------------------------------------
+// Re-exported at the top level for convenience; the canonical path is
+// '@opnet-collective/op-index/chains/opnet'.
+
 export {
+  DbEventSource,
   RpcEventSource,
   type BlockProvider,
   type BlockLike,
   type TransactionLike,
   type RpcEventSourceOptions,
-} from './rpcSource.js';
-
-export {
   WsEventSource,
   type WsEventSourceOptions,
-} from './wsSource.js';
-
-export {
   OpStreamRpcEventSource,
   type OpStreamRpcEventSourceOptions,
-} from './opStreamRpcSource.js';
-
-export {
   createEventSource,
   probeOpStreamSchema,
   type EventSourceInput,
   type CreateEventSourceOptions,
-} from './eventSourceFactory.js';
-
-// --- Types -----------------------------------------------------------------
-
-export type { DecodedEvent } from './types.js';
-
-// --- Event decoders --------------------------------------------------------
-
-export {
   decodeEvent, registerDecoder, DECODER_REGISTRY,
   type EventDecoder,
-} from './decoders/eventDecoders.js';
-
-// --- Contract standard detection -------------------------------------------
-
-export {
   OP20_EVENT_NAMES, OP721_EVENT_NAMES,
   isOP20Contract, isOP721Contract, classifyContract,
   type OP20EventName, type OP721EventName,
-} from './standards.js';
-
-// --- Native token constants ------------------------------------------------
-
-export {
   OPNET_NATIVE_TOKENS, getNativeToken, isNativeToken,
   type TokenMetadata,
-} from './tokens.js';
-
-// --- Address utilities -----------------------------------------------------
-
-export {
   pubkeyHexToP2op, isP2opAddress, normaliseFromAddress,
-} from './p2op.js';
-
+  OPNET_CHAIN_ID, OPNET_NETWORK,
+  type OpnetChainMeta,
+} from './chains/opnet/index.js';

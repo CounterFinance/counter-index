@@ -7,9 +7,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { SqliteAdapter } from '../src/adapter.js';
-import { DbEventSource } from '../src/source.js';
-import { RpcEventSource, type BlockProvider } from '../src/rpcSource.js';
-import { createEventSource, probeOpStreamSchema } from '../src/eventSourceFactory.js';
+import { DbEventSource } from '../src/chains/opnet/dbSource.js';
+import { RpcEventSource, type BlockProvider } from '../src/chains/opnet/rpcSource.js';
+import { createEventSource, probeOpStreamSchema } from '../src/chains/opnet/eventSourceFactory.js';
 
 // ---------------------------------------------------------------------------
 // Helpers

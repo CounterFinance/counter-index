@@ -24,8 +24,7 @@ import { createStore } from './store.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
 import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerContext, type BlockContext } from './handler.js';
-import { decodeEvent } from './decoders/eventDecoders.js';
-import type { DecodedEvent } from './types.js';
+import type { ChainEvent } from './types.js';
 import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type ServeOptions, type ServeHandle } from './graphql.js';
 import { noopLogger, type IndexerLogger } from './logger.js';
 
@@ -69,27 +68,11 @@ export interface Indexer {
   onBlock(handler: BlockHandler): void;
 
   /** Process a single decoded event through all matching handlers. */
-  processEvent(event: DecodedEvent): Promise<void>;
+  processEvent(event: ChainEvent): Promise<void>;
 
   /** Process a batch of events in order. */
-  processEvents(events: DecodedEvent[]): Promise<void>;
+  processEvents(events: ChainEvent[]): Promise<void>;
 
-  /**
-   * Process a raw event: decode it first, then dispatch.
-   * Useful when receiving raw bytes directly (e.g. WebSocket push).
-   */
-  processRawEvent(
-    eventName: string,
-    rawData: Buffer | Uint8Array,
-    meta: {
-      blockNumber: number;
-      txHash: string;
-      contractAddress: string;
-      blockTimestamp?: number;
-      logIndex?: number;
-      fromAddress?: string;
-    },
-  ): Promise<void>;
 
   /**
    * Backfill: query [fromBlock, toBlock] from the source and run all events
@@ -158,7 +141,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     lastBlock: 0,
   };
 
-  function makeContext(event: DecodedEvent): HandlerContext {
+  function makeContext(event: ChainEvent): HandlerContext {
     return {
       store,
       block: event.blockNumber,
@@ -170,7 +153,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     return { blockNumber, blockTimestamp, store };
   }
 
-  async function dispatch(event: DecodedEvent): Promise<void> {
+  async function dispatch(event: ChainEvent): Promise<void> {
     stats.eventsProcessed++;
     if (event.blockNumber > stats.lastBlock) {
       stats.lastBlock = event.blockNumber;
@@ -264,23 +247,6 @@ export async function createIndexer<S extends SchemaDefinition>(
           block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
         });
       }
-    },
-
-    async processRawEvent(eventName, rawData, meta) {
-      const raw = rawData instanceof Uint8Array ? rawData : new Uint8Array(rawData);
-      const decoded = decodeEvent(eventName, raw);
-      await dispatch({
-        blockNumber:     meta.blockNumber,
-        txHash:          meta.txHash,
-        contractAddress: meta.contractAddress,
-        eventName,
-        eventRaw:        raw,
-        decoded,
-        dataLength:      raw.length,
-        blockTimestamp:  meta.blockTimestamp,
-        logIndex:        meta.logIndex,
-        fromAddress:     meta.fromAddress,
-      });
     },
 
     async sync(fromBlock, toBlock, filters, knownTip) {

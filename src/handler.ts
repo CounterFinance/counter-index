@@ -14,7 +14,7 @@
  */
 
 import type { EntityStore } from './store.js';
-import type { DecodedEvent } from './types.js';
+import type { ChainEvent } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,7 +31,7 @@ export interface HandlerContext {
 }
 
 /** An event handler function. May be async. */
-export type EventHandler = (event: DecodedEvent, context: HandlerContext) => Promise<void> | void;
+export type EventHandler = (event: ChainEvent, context: HandlerContext) => Promise<void> | void;
 
 /**
  * Context passed to every block handler.
@@ -92,7 +92,7 @@ export class HandlerRegistry {
   }
 
   /** Dispatch an event to all matching handlers. Awaits async handlers in sequence. */
-  async dispatch(event: DecodedEvent, context: HandlerContext): Promise<void> {
+  async dispatch(event: ChainEvent, context: HandlerContext): Promise<void> {
     const specific = this.handlers.get(event.eventName);
     if (specific) {
       for (const handler of specific) {
