@@ -20,13 +20,13 @@ import { defineSchema } from '../src/schema.js';
 import { createIndexer } from '../src/indexer.js';
 import { createTestAdapter } from '../src/adapter.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
-import type { DecodedEvent } from '../src/types.js';
+import type { ChainEvent } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeEvent(blockNumber: number, i: number): DecodedEvent {
+function makeEvent(blockNumber: number, i: number): ChainEvent {
   return {
     blockNumber,
     txHash:          `0xtx${blockNumber}_${i}`,

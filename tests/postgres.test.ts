@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { defineSchema } from '../src/schema.js';
 import { createStore } from '../src/store.js';
-import { DbEventSource } from '../src/source.js';
+import { DbEventSource } from '../src/chains/opnet/dbSource.js';
 import type { MinimalDbAdapter } from '../src/adapter.js';
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {

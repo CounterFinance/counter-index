@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { OpStreamRpcEventSource } from '../src/opStreamRpcSource.js';
+import type { OpnetChainMeta } from '../src/chains/opnet/types.js';
+import { OpStreamRpcEventSource } from '../src/chains/opnet/opStreamRpcSource.js';
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
@@ -150,8 +151,8 @@ describe('OpStreamRpcEventSource — logIndex continuity', () => {
     const src = new OpStreamRpcEventSource('http://localhost');
     const events = await collect(src.queryStream(400, 400));
 
-    expect(events[0]!.fromAddress).toMatch(/^op1/);
-    expect(events[0]!.fromAddressPubkey).toBe(HEX_PUBKEY);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddress).toMatch(/^op1/);
+    expect((events[0]!.chainMeta as OpnetChainMeta).fromAddressPubkey).toBe(HEX_PUBKEY);
   });
 
   it('consumes logIndex slots for filtered-out events', async () => {

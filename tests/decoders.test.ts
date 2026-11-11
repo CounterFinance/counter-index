@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { decodeEvent, DECODER_REGISTRY } from '../src/decoders/eventDecoders.js';
+import { decodeEvent, DECODER_REGISTRY } from '../src/chains/opnet/decoders.js';
 
 // Helpers to build raw event bytes in OPNET big-endian format
 
