@@ -13,7 +13,7 @@
  * both use the same database.
  */
 
-import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
+import type { Schema, SchemaDefinition, EntityDef, FieldDef, FieldType } from './schema.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import { noopLogger, type IndexerLogger } from './logger.js';
 
@@ -76,6 +76,50 @@ export interface EntityStore {
    * Returns undefined if no block has been checkpointed yet.
    */
   readCheckpoint(): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
+}
+
+// ---------------------------------------------------------------------------
+// Typed store — entity row types inferred from the schema (no codegen)
+// ---------------------------------------------------------------------------
+
+/** Map a schema FieldDef to its TypeScript value type. */
+type FieldTsType<F extends FieldDef> =
+  F['type'] extends 'string'  ? string :
+  F['type'] extends 'int'     ? number :
+  F['type'] extends 'float'   ? number :
+  F['type'] extends 'bigint'  ? bigint :
+  F['type'] extends 'boolean' ? boolean :
+  F['type'] extends 'bytes'   ? Uint8Array :
+  never;
+
+type RequiredFieldKeys<E extends EntityDef> =
+  { [K in keyof E]: E[K]['optional'] extends true ? never : K }[keyof E];
+type OptionalFieldKeys<E extends EntityDef> =
+  { [K in keyof E]: E[K]['optional'] extends true ? K : never }[keyof E];
+
+/** The write shape for an entity: its declared fields, required vs optional honoured. */
+export type RowOf<E extends EntityDef> =
+  { [K in RequiredFieldKeys<E>]: FieldTsType<E[K]> } &
+  { [K in OptionalFieldKeys<E>]?: FieldTsType<E[K]> };
+
+/** The read shape: the row plus the `id` the store stamps on every record. */
+export type StoredRow<E extends EntityDef> = RowOf<E> & { id: string };
+
+/**
+ * A schema-typed view over EntityStore. `createIndexer(<S>)` exposes this on
+ * `indexer.store` and on each handler's `ctx.store`, so entity names are checked
+ * and row shapes are inferred — no codegen, no manual casts. The untyped
+ * `EntityStore` remains the runtime contract underneath.
+ */
+export interface TypedStore<S extends SchemaDefinition = SchemaDefinition> {
+  get<N extends keyof S & string>(entity: N, id: string): Promise<StoredRow<S[N]> | undefined>;
+  set<N extends keyof S & string>(entity: N, id: string, data: RowOf<S[N]>): Promise<void>;
+  update<N extends keyof S & string>(entity: N, id: string, partial: Partial<RowOf<S[N]>>): Promise<void>;
+  delete<N extends keyof S & string>(entity: N, id: string): Promise<void>;
+  list<N extends keyof S & string>(entity: N): Promise<StoredRow<S[N]>[]>;
+  count<N extends keyof S & string>(entity: N): Promise<number>;
+  find<N extends keyof S & string>(entity: N, predicate: (record: StoredRow<S[N]>) => boolean): Promise<StoredRow<S[N]>[]>;
+  onChange(handler: (event: StoreChangeEvent) => void): () => void;
 }
 
 // ---------------------------------------------------------------------------
