@@ -9,10 +9,11 @@
 
 // --- Core framework (chain-neutral) ----------------------------------------
 
-export { defineSchema, type Schema, type SchemaDefinition, type EntityDef, type FieldDef, type FieldType } from './schema.js';
+export { defineSchema, type Schema, type SchemaDefinition, type EntityDef, type FieldDef, type FieldType, type DefineSchemaOptions } from './schema.js';
 export { type EntityStore, type StoreChangeEvent, type TypedStore, type RowOf, type StoredRow } from './store.js';
 export { HandlerRegistry, type HandlerContext, type EventHandler, type BlockContext, type BlockHandler } from './handler.js';
 export { createIndexer, type Indexer, type IndexerConfig, type IndexerStats, type ServeOptions, type ServeHandle } from './indexer.js';
+export { createMultiIndexer, type MultiIndexer, type MultiIndexerConfig, type MultiSource } from './multiIndexer.js';
 export { type IndexerLogger } from './logger.js';
 
 // --- DB adapter ------------------------------------------------------------
