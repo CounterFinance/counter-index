@@ -8,6 +8,13 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**'],
       reporter: ['text-summary', 'text'],
+      // Floor — `npm run coverage` fails if coverage regresses below these.
+      thresholds: {
+        statements: 85,
+        branches: 80,
+        functions: 75,
+        lines: 85,
+      },
     },
   },
 });
