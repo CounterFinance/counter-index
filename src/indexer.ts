@@ -55,6 +55,14 @@ export interface IndexerStats {
   eventsSkipped: number;
   blocksProcessed: number;
   lastBlock: number;
+  /** Entity upserts (set) — a create or an overwrite. */
+  entitiesWritten: number;
+  /** Explicit partial updates. */
+  entitiesUpdated: number;
+  /** Entity deletes. */
+  entitiesDeleted: number;
+  /** Write count per entity table (set/update/delete). */
+  writesByTable: Record<string, number>;
 }
 
 export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
@@ -157,12 +165,17 @@ export async function createIndexer<S extends SchemaDefinition>(
   const store = await createStore(config.schema, config.sink, log);
   const registry = new HandlerRegistry();
   let stats: IndexerStats = {
-    eventsProcessed: 0,
-    eventsDecoded: 0,
-    eventsSkipped: 0,
-    blocksProcessed: 0,
-    lastBlock: 0,
+    eventsProcessed: 0, eventsDecoded: 0, eventsSkipped: 0, blocksProcessed: 0, lastBlock: 0,
+    entitiesWritten: 0, entitiesUpdated: 0, entitiesDeleted: 0, writesByTable: {},
   };
+
+  // Count entity writes for stats / metrics via the store's change feed.
+  store.onChange((e) => {
+    stats.writesByTable[e.entity] = (stats.writesByTable[e.entity] ?? 0) + 1;
+    if (e.operation === 'set') stats.entitiesWritten++;
+    else if (e.operation === 'update') stats.entitiesUpdated++;
+    else if (e.operation === 'delete') stats.entitiesDeleted++;
+  });
 
   // The runtime store is the untyped EntityStore; the public API (handler
   // contexts, indexer.store) presents it as the schema-typed TypedStore<S>.
@@ -508,11 +521,8 @@ export async function createIndexer<S extends SchemaDefinition>(
 
     resetStats() {
       stats = {
-        eventsProcessed: 0,
-        eventsDecoded: 0,
-        eventsSkipped: 0,
-        blocksProcessed: 0,
-        lastBlock: 0,
+        eventsProcessed: 0, eventsDecoded: 0, eventsSkipped: 0, blocksProcessed: 0, lastBlock: 0,
+        entitiesWritten: 0, entitiesUpdated: 0, entitiesDeleted: 0, writesByTable: {},
       };
     },
 
@@ -520,7 +530,9 @@ export async function createIndexer<S extends SchemaDefinition>(
       const gqlSchema = buildGraphQLSchema(config.schema, store, {
         subscriptions: options?.subscriptions,
       });
-      const { server, url } = startGraphQLServer(gqlSchema, options);
+      // Default /health + /metrics expose the live indexer stats.
+      const serveOptions = { ...options, status: options?.status ?? ((): Record<string, unknown> => ({ ...stats })) };
+      const { server, url } = startGraphQLServer(gqlSchema, serveOptions);
       if (options?.subscriptions) {
         await startSubscriptionServer(gqlSchema, server);
       }
