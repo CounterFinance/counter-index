@@ -58,6 +58,27 @@ export interface ServeOptions {
    * Default: false.
    */
   subscriptions?: boolean;
+  /**
+   * Provider for GET /health (JSON) and GET /metrics (Prometheus text). Numeric
+   * values become `opindex_<key>` gauges; a nested object becomes labelled
+   * gauges `opindex_<key>{key="<sub>"}`. Booleans map to 0/1.
+   */
+  status?: () => Record<string, unknown>;
+}
+
+/** Render a flat/one-level-nested status map as Prometheus exposition text. */
+function renderMetrics(status: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(status)) {
+    if (typeof v === 'number') lines.push(`opindex_${k} ${v}`);
+    else if (typeof v === 'boolean') lines.push(`opindex_${k} ${v ? 1 : 0}`);
+    else if (v && typeof v === 'object') {
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof v2 === 'number') lines.push(`opindex_${k}{key="${k2}"} ${v2}`);
+      }
+    }
+  }
+  return lines.join('\n') + '\n';
 }
 
 export interface ServeHandle {
@@ -611,6 +632,19 @@ export function startGraphQLServer(
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Health + metrics (operational endpoints).
+    if (req.method === 'GET' && url.pathname === '/health') {
+      const s = options.status?.() ?? {};
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', ...s }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/metrics') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
+      res.end(renderMetrics(options.status?.() ?? {}));
       return;
     }
 
