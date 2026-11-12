@@ -88,6 +88,11 @@ export class SqliteAdapter implements MinimalDbAdapter {
       throw err;
     }
   }
+
+  /** Close the underlying database (used by graceful shutdown). Idempotent. */
+  close(): void {
+    if (this.rawDb.open) this.rawDb.close();
+  }
 }
 
 // ---------------------------------------------------------------------------
