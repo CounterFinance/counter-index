@@ -23,10 +23,43 @@ schema-typed store → SQLite — and reports throughput + peak memory.
   RPC/data-source latency, not the indexer — which is exactly why the EVM adapter
   can later swap `eth_getLogs` for HyperSync (opidx-#18). This number measures the
   **indexer core**, not end-to-end sync against a live chain.
-- **One `store.set` per event**, no batching. The deferred "bulk per-block writes"
-  optimisation (buffer a block's writes into one multi-row upsert) would raise
-  write-bound throughput further; see the roadmap §9 backlog.
-- Postgres will differ from SQLite (network round-trips vs in-process).
+- Postgres will differ from SQLite (network round-trips vs in-process) — see the
+  write-batching section below, where that difference is the whole point.
+
+## Per-block write batching (M13)
+
+Every entity write for a block is buffered and committed as a handful of chunked
+multi-row upserts inside the block's single transaction, instead of one
+round-trip per `store.set`. `get` reads the buffer first (read-your-writes), so
+the balance pattern (`get` current → `set` current ± delta) still works mid-block.
+
+`npm run bench:batch` — one block of 2000 ERC-20 transfers over 200 accounts
+(2000 `Transfer` rows + sender/receiver `Balance` churn), counting **DB
+round-trips** (the honest metric — each one is a full RTT on a networked Postgres):
+
+| mode      | write round-trips | read round-trips | wall (in-mem SQLite) |
+|-----------|------------------:|-----------------:|---------------------:|
+| unbatched |              6000 |             4000 |              ~46 ms |
+| batched   |             **2** |          **200** |              ~21 ms |
+| reduction |      **3000× fewer** |     **20× fewer** |            ~2.2× faster |
+
+Reading these honestly:
+- **Round-trips are the real story, not the wall time.** The bench runs on
+  in-memory SQLite where a round-trip is nearly free, so wall time only improves
+  ~2×. On a networked Postgres each of the 6000 writes pays a full RTT (~0.5–2 ms
+  LAN, more over WAN); cutting that to 2 is where batching pays off — the bench
+  deliberately measures the round-trip count so the win is visible without a
+  network in the loop.
+- **The read reduction (20×) is incidental** — it comes from read-your-writes
+  serving repeat balance lookups from the buffer. The structural read win (SQL
+  `WHERE`/`LIMIT` pushdown over the secondary indexes added in this milestone,
+  instead of whole-table scans) is tracked separately as opidx-#42 / M17.
+- Writes are chunked to stay under the driver's bind-parameter ceiling (SQLite
+  ~32766, Postgres 65535), so a very large block fans out into a few statements,
+  not one oversized one. Verified on real Postgres in `tests/postgres.integration.test.ts`.
+- The bench asserts the batched final state is **identical** to the unbatched
+  one, and the crash-injection dogfood (`npm run dogfood:atomicity`) exercises the
+  buffered path end-to-end — a mid-block crash still rolls the whole block back.
 
 ## Cross-tool comparison
 

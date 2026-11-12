@@ -66,6 +66,31 @@ suite('Postgres integration (real connection)', () => {
     expect(await store.get('Bal', 'y')).toBeUndefined();    // y never existed at block 2
   });
 
+  it('batched block writes (multi-row upsert) on real Postgres', async () => {
+    const schema = defineSchema({ Tok: { bal: { type: 'bigint' }, sym: { type: 'string' } } }) as Schema<SchemaDefinition>;
+    const store = await createStore(schema, adapter);
+
+    // Simulate one block: buffer many writes, flush as chunked multi-row upserts.
+    store.beginBatch();
+    for (let i = 0; i < 500; i++) await store.set('Tok', `t${i}`, { bal: BigInt(i), sym: `S${i}` });
+    await store.update('Tok', 't0', { bal: 1_000n });   // read-your-writes inside the batch
+    expect((await store.get('Tok', 't0'))!['bal']).toBe(1_000n);
+    await store.flushBatch();
+
+    expect(await store.count('Tok')).toBe(500);
+    expect((await store.get('Tok', 't0'))!['bal']).toBe(1_000n);   // merged value persisted
+    expect((await store.get('Tok', 't499'))!['bal']).toBe(499n);
+
+    // Re-flush the same keys (ON CONFLICT DO UPDATE path) + a batched delete.
+    store.beginBatch();
+    await store.set('Tok', 't1', { bal: 7n, sym: 'X' });
+    await store.delete('Tok', 't2');
+    await store.flushBatch();
+    expect((await store.get('Tok', 't1'))!['bal']).toBe(7n);
+    expect(await store.get('Tok', 't2')).toBeUndefined();
+    expect(await store.count('Tok')).toBe(499);
+  });
+
   it('checkpoints read/write', async () => {
     const schema = defineSchema({ Z: { v: { type: 'int' } } }) as Schema<SchemaDefinition>;
     const store = await createStore(schema, adapter);
