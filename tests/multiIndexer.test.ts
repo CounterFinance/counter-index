@@ -95,6 +95,40 @@ describe('createMultiIndexer', () => {
     expect(meta.find((m) => m.id === 'chain:2')!.last_block).toBe(9);
   });
 
+  it('backfills chains in PARALLEL when each has its own connection', async () => {
+    // A source whose first yield is delayed, so a sequential syncAll takes ~2×D
+    // and a parallel one ~1×D. Each chain gets its OWN sink (separate connection).
+    const DELAY = 60;
+    const delayedSource = (chainId: number): EventSource => ({
+      async *queryStream(from: number, to: number): AsyncIterable<ChainEvent> {
+        await new Promise((r) => setTimeout(r, DELAY));
+        if (from <= 1 && to >= 1) yield transfer(chainId, 1, 0, 'A', 'B', 1n);
+      },
+      subscribe(): UnsubscribeFn { return () => {}; },
+    });
+
+    const makeMi = (useOwnSinks: boolean) => createMultiIndexer({
+      schema, sink,
+      sources: [
+        { source: delayedSource(1), chainId: 1, fromBlock: 1, toBlock: 1, sink: useOwnSinks ? new SqliteAdapter(new Database(':memory:')) : undefined },
+        { source: delayedSource(2), chainId: 2, fromBlock: 1, toBlock: 1, sink: useOwnSinks ? new SqliteAdapter(new Database(':memory:')) : undefined },
+      ],
+    });
+
+    const run = async (useOwnSinks: boolean): Promise<number> => {
+      const mi = await makeMi(useOwnSinks);
+      mi.on('Transfer', async (e, ctx) => { await ctx.store.set('TokenHolder', e.decoded!['to'] as string, { holder: 'B', balance: 1n }); });
+      const t0 = Date.now();
+      await mi.syncAll();
+      return Date.now() - t0;
+    };
+
+    const seqMs = await run(false);   // shared connection → sequential
+    const parMs = await run(true);    // per-chain connections → parallel
+    expect(seqMs).toBeGreaterThanOrEqual(2 * DELAY - 15);
+    expect(parMs).toBeLessThan(seqMs - DELAY / 2);   // meaningfully overlapped
+  });
+
   it('rejects a non-multichain schema', async () => {
     const single = defineSchema({ X: { v: { type: 'int' } } });
     await expect(createMultiIndexer({ schema: single, sink, sources: [] }))

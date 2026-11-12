@@ -45,6 +45,12 @@ export interface EvmLogSourceOptions {
    * under load benefits from e.g. `{ attempts: 4 }`.
    */
   retry?: RetryOptions;
+  /**
+   * Fetch this many `eth_getLogs` chunks in parallel during backfill, yielding
+   * them strictly in block order (ordered-parallel). Default 1 (sequential).
+   * 4–8 cuts backfill wall time dramatically when the RPC round-trip dominates.
+   */
+  concurrency?: number;
 }
 
 const hexToBytes = (hex: string): Uint8Array =>
@@ -61,6 +67,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
   private readonly defaultPollMs: number;
   private readonly fetchTs: boolean;
   private readonly retry: RetryOptions;
+  private readonly concurrency: number;
   /** blockNumber -> unix timestamp, cached across chunks. */
   private readonly tsCache = new Map<number, number>();
   /** Observability counters (read by callers / metrics). */
@@ -80,6 +87,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
     this.defaultPollMs = options.pollIntervalMs ?? 12_000;
     this.fetchTs = options.fetchBlockTimestamps ?? true;
     this.retry = options.retry ?? { attempts: 1 };
+    this.concurrency = Math.max(1, options.concurrency ?? 1);
   }
 
   /** Issue one RPC call, counting requests + retries and applying backoff. */
@@ -110,17 +118,28 @@ export class EvmLogSource implements EventSource, DynamicSource {
   ): AsyncIterable<ChainEvent> {
     const addressFilter = this.resolveAddressFilter(filters);
 
+    // Split the range into fixed chunks, then fetch up to `concurrency` chunks
+    // in flight while yielding them strictly in order — so the indexer still sees
+    // blocks ascending, but we're not idle waiting on one RPC round-trip at a time.
+    const ranges: Array<[number, number]> = [];
     for (let f = fromBlock; f <= toBlock; f += this.maxBlockRange) {
-      const end = Math.min(f + this.maxBlockRange - 1, toBlock);
-      const logs = await this.rpc(() => this.client.getLogs({
-        address: addressFilter,
-        fromBlock: BigInt(f),
-        toBlock: BigInt(end),
-      }));
-      const ordered = [...logs].sort(compareLogs);
-      const txEventsByTx = buildTxEventsMap(ordered, this.decoder);
-      if (this.fetchTs) await this.loadTimestamps(ordered);
+      ranges.push([f, Math.min(f + this.maxBlockRange - 1, toBlock)]);
+    }
 
+    const fetchChunk = async ([f, end]: [number, number]): Promise<Log[]> => {
+      const logs = await this.rpc(() => this.client.getLogs({ address: addressFilter, fromBlock: BigInt(f), toBlock: BigInt(end) }));
+      const ordered = [...logs].sort(compareLogs);
+      if (this.fetchTs) await this.loadTimestamps(ordered);
+      return ordered;
+    };
+
+    const inflight: Array<Promise<Log[]>> = [];
+    let next = 0;
+    while (next < ranges.length && inflight.length < this.concurrency) inflight.push(fetchChunk(ranges[next++]));
+    while (inflight.length > 0) {
+      const ordered = await inflight.shift()!;                              // head chunk, in order
+      if (next < ranges.length) inflight.push(fetchChunk(ranges[next++]));  // keep the pipe full
+      const txEventsByTx = buildTxEventsMap(ordered, this.decoder);
       for (const log of ordered) {
         const event = this.toChainEvent(log, txEventsByTx);
         if (filters?.eventNames && !filters.eventNames.includes(event.eventName)) continue;
