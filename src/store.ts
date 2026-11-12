@@ -394,11 +394,10 @@ function buildUpsert(
   const colList = ['"id"', ...fields.map(col)].join(', ');
   const ph = paramList(dialect, fields.length + 1).join(', ');
 
-  if (dialect === 'sqlite') {
-    // INSERT OR REPLACE replaces by the full primary key (composite in multichain).
-    return `INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`;
-  }
-
+  // Upsert on the PRIMARY KEY only (id, or composite (chainId,id)). A conflict on
+  // any OTHER unique index therefore RAISES instead of silently replacing — so a
+  // `unique` field is a real constraint on both dialects (SQLite's INSERT OR
+  // REPLACE would instead delete the conflicting row).
   const conflict = multichain ? `(${col('chainId')}, "id")` : `("id")`;
   const updates = fields.filter((f) => f !== 'chainId').map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
   return `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ${conflict} DO UPDATE SET ${updates}`;
@@ -422,8 +421,14 @@ export async function createStore(
     await adapter.exec(buildCreateTable(name, def, dialect, multichain));
     const table = tableName(name);
     for (const [field, fieldDef] of Object.entries(def)) {
-      // Index chainId (the hot multichain filter) + any field marked index:true.
-      if (fieldDef.index || (multichain && field === 'chainId')) {
+      // UNIQUE index for unique fields; a plain index for index:true + the hot
+      // multichain chainId filter. (In multichain, uniqueness is scoped per chain.)
+      if (fieldDef.unique) {
+        const cols = multichain ? `${col('chainId')}, ${col(field)}` : col(field);
+        await adapter.exec(
+          `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_${field.toLowerCase()}_uniq ON ${table} (${cols})`,
+        );
+      } else if (fieldDef.index || (multichain && field === 'chainId')) {
         await adapter.exec(
           `CREATE INDEX IF NOT EXISTS ${table}_${field.toLowerCase()}_idx ON ${table} (${col(field)})`,
         );
@@ -637,11 +642,9 @@ export async function createStore(
           tuples.push(`(${paramList(dialect, perRow, params.length + 1).join(', ')})`);
           params.push(p.id, ...fields.map((f) => serialise(p.data[f], def[f].type, dialect)));
         }
-        if (dialect === 'sqlite') {
-          await adapter.run(`INSERT OR REPLACE INTO ${table} (${colList}) VALUES ${tuples.join(', ')}`, params);
-        } else {
-          await adapter.run(`INSERT INTO ${table} (${colList}) VALUES ${tuples.join(', ')} ON CONFLICT ${conflict} DO UPDATE SET ${updates}`, params);
-        }
+        // Upsert on the PK only (see buildUpsert) so a `unique` field raises
+        // instead of silently replacing — same statement on both dialects.
+        await adapter.run(`INSERT INTO ${table} (${colList}) VALUES ${tuples.join(', ')} ON CONFLICT ${conflict} DO UPDATE SET ${updates}`, params);
       }
       rows += pend.length;
     }
