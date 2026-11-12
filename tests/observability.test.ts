@@ -33,7 +33,9 @@ describe('observability', () => {
     const handle = await indexer.serve({ port: 47900 });
     try {
       const health = await (await fetch('http://localhost:47900/health')).json() as Record<string, unknown>;
-      expect(health['status']).toBe('ok');
+      // With a committed block (tip unknown on a direct feed) the state is backfilling.
+      expect(health['status']).toBe('backfilling');
+      expect((health['health'] as { state: string }).state).toBe('backfilling');
       expect(health['entitiesWritten']).toBe(3);
       expect(health['eventsProcessed']).toBe(3);
 
@@ -41,6 +43,10 @@ describe('observability', () => {
       expect(metrics).toContain('opindex_entitiesWritten 3');
       expect(metrics).toContain('opindex_blocksProcessed 1');
       expect(metrics).toContain('opindex_writesByTable{key="Thing"} 3');
+      // M18 series: one-hot health state gauge + handler-latency histogram.
+      expect(metrics).toContain('opindex_health_state{state="backfilling"} 1');
+      expect(metrics).toContain('opindex_health_state{state="live"} 0');
+      expect(metrics).toContain('opindex_handler_latency_ms_count 3');
     } finally {
       await handle.stop();
     }

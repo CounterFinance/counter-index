@@ -124,15 +124,26 @@ round-trip is a full RTT.
 
 ## Phase D — Operability (an A+ indexer runs in production unattended)
 
-### M18 — Production ops · P0 · ~2–3 days
-- [ ] **Graceful shutdown**: SIGTERM → finish the block, flush, checkpoint, close
-      the server + DB. (A crash-at-shutdown corrupts.)
-- [ ] **Real health states** on `/health`: `starting | backfilling | live |
-      degraded | stalled` + per-chain lag — not just `ok`.
-- [ ] **Expanded metrics**: per-chain blocks-behind, **reorg counter**, handler
-      latency **histograms**, error rate, source request counts.
-- [ ] **OpenTelemetry** spans per block/handler (traceable in Grafana/Tempo).
-- [ ] Configurable **retry/backoff + rate-limit** per source; **backpressure**.
+### M18 — Production ops · P0 · **DONE** (opidx-#47) — see docs/operations.md
+- [x] **Graceful shutdown**: `shutdown()` drains the in-flight block (atomic),
+      stops the subscription, closes server + DB, runs hooks;
+      `installSignalHandlers()` wires SIGTERM/SIGINT. Dogfood proves checkpoint
+      stays consistent (`npm run dogfood:ops`).
+- [x] **Real health states** on `/health`: `starting | backfilling | live |
+      degraded | stalled | draining | stopped` + per-chain lag, derived from the
+      clock; `/health` returns **503** on stalled/draining/stopped for LB drain.
+- [x] **Expanded metrics**: per-chain `blocks_behind`/`last_block`/`idle_ms`,
+      `reorgs_total`, `errors_total`, a handler-latency **histogram**, uptime, and
+      a one-hot `health_state` gauge — all Prometheus text format.
+- [x] **Tracing**: an OpenTelemetry-SHAPED tracer hook (`Tracer`/`Span`), span per
+      block, `jsonTracer` exporter; SDK deliberately **not** bundled — bridge
+      documented. Honestly a hook, not a shipped integration.
+- [x] **Retry/backoff** (exp + full jitter) on the source (`EvmLogSource.retry`),
+      with request/retry counters. `withRetry` exported.
+- [ ] Per-source **rate-limit + backpressure** — deferred to M19 (deploy/config).
+- Drive-by: fixed a **real pre-existing DoS** — an oversized POST body crashed the
+      whole GraphQL listener (unhandled socket error); it now replies 413 and the
+      server stays up (`tests/security.test.ts`).
 *Why:* "is it alive, how far behind, why is it slow" must be answerable at 3am.
 
 ### M19 — Deploy, config & migrations · P1 · ~2–3 days

@@ -14,6 +14,7 @@ import type { EventSource, EventSourceFilters, UnsubscribeFn, DynamicSource } fr
 import type { ChainEvent } from '../../types.js';
 import type { EvmChainMeta } from './types.js';
 import { EvmAbiDecoder } from './evmDecoder.js';
+import { withRetry, type RetryOptions } from '../../lifecycle.js';
 
 export interface EvmLogSourceOptions {
   /** EIP-155 chain id stamped on every event. */
@@ -38,6 +39,12 @@ export interface EvmLogSourceOptions {
    * true. Set false to skip the extra round-trips when you don't need block time.
    */
   fetchBlockTimestamps?: boolean;
+  /**
+   * Retry/backoff for transient RPC failures (`eth_getLogs`, `eth_getBlock*`),
+   * exponential with full jitter. Off by default (one attempt). A public RPC
+   * under load benefits from e.g. `{ attempts: 4 }`.
+   */
+  retry?: RetryOptions;
 }
 
 const hexToBytes = (hex: string): Uint8Array =>
@@ -53,8 +60,12 @@ export class EvmLogSource implements EventSource, DynamicSource {
   private readonly maxBlockRange: number;
   private readonly defaultPollMs: number;
   private readonly fetchTs: boolean;
+  private readonly retry: RetryOptions;
   /** blockNumber -> unix timestamp, cached across chunks. */
   private readonly tsCache = new Map<number, number>();
+  /** Observability counters (read by callers / metrics). */
+  requests = 0;
+  retries = 0;
 
   constructor(options: EvmLogSourceOptions) {
     if (!options.client && !options.rpcUrl) {
@@ -68,6 +79,13 @@ export class EvmLogSource implements EventSource, DynamicSource {
     this.maxBlockRange = options.maxBlockRange ?? 2000;
     this.defaultPollMs = options.pollIntervalMs ?? 12_000;
     this.fetchTs = options.fetchBlockTimestamps ?? true;
+    this.retry = options.retry ?? { attempts: 1 };
+  }
+
+  /** Issue one RPC call, counting requests + retries and applying backoff. */
+  private rpc<T>(fn: () => Promise<T>): Promise<T> {
+    this.requests++;
+    return withRetry(fn, { ...this.retry, onRetry: (a, e, d) => { this.retries++; this.retry.onRetry?.(a, e, d); } });
   }
 
   /** Fetch + cache timestamps for the blocks that have logs in this batch. */
@@ -79,7 +97,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
     }
     for (const bn of want) {
       try {
-        const block = await this.client.getBlock({ blockNumber: BigInt(bn), includeTransactions: false });
+        const block = await this.rpc(() => this.client.getBlock({ blockNumber: BigInt(bn), includeTransactions: false }));
         this.tsCache.set(bn, Number(block.timestamp));
       } catch { /* leave undefined — timestamp is best-effort */ }
     }
@@ -94,11 +112,11 @@ export class EvmLogSource implements EventSource, DynamicSource {
 
     for (let f = fromBlock; f <= toBlock; f += this.maxBlockRange) {
       const end = Math.min(f + this.maxBlockRange - 1, toBlock);
-      const logs = await this.client.getLogs({
+      const logs = await this.rpc(() => this.client.getLogs({
         address: addressFilter,
         fromBlock: BigInt(f),
         toBlock: BigInt(end),
-      });
+      }));
       const ordered = [...logs].sort(compareLogs);
       const txEventsByTx = buildTxEventsMap(ordered, this.decoder);
       if (this.fetchTs) await this.loadTimestamps(ordered);
@@ -123,7 +141,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
     const poll = async (): Promise<void> => {
       if (stopped) return;
       try {
-        const tip = Number(await this.client.getBlockNumber());
+        const tip = Number(await this.rpc(() => this.client.getBlockNumber()));
         if (tip > lastBlock) {
           for await (const e of this.queryStream(lastBlock + 1, tip)) {
             if (stopped) return;

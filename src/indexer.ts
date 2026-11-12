@@ -28,6 +28,10 @@ import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerCont
 import type { ChainEvent } from './types.js';
 import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type ServeOptions, type ServeHandle } from './graphql.js';
 import { noopLogger, type IndexerLogger } from './logger.js';
+import {
+  Lifecycle, Histogram, noopTracer,
+  type LifecycleOptions, type HealthReport, type Tracer,
+} from './lifecycle.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -47,6 +51,10 @@ export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
    * See docs/reorg-design.md.
    */
   reorg?: { finalityDepth: number };
+  /** Health-state machine tuning (stall/live thresholds, injectable clock). */
+  lifecycle?: LifecycleOptions;
+  /** OpenTelemetry-shaped tracer hook (default: no-op). Emits a span per block. */
+  tracer?: Tracer;
 }
 
 export interface IndexerStats {
@@ -63,6 +71,10 @@ export interface IndexerStats {
   entitiesDeleted: number;
   /** Write count per entity table (set/update/delete). */
   writesByTable: Record<string, number>;
+  /** Reorgs detected + rolled back. */
+  reorgs: number;
+  /** Handler errors observed (each rolls its block back). */
+  errors: number;
 }
 
 export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
@@ -129,6 +141,29 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
   resetStats(): void;
 
   /**
+   * Current operational health: state (`starting | backfilling | live |
+   * degraded | stalled | draining | stopped`), uptime, per-chain lag, and the
+   * reorg/error/retry counters. This is what `/health` and `/metrics` report.
+   */
+  health(): HealthReport;
+
+  /**
+   * Graceful shutdown: stop the live subscription, let the in-flight block
+   * finish committing (block commits are atomic — M10), close the HTTP server
+   * and the sink DB, then run any `onShutdown` hooks. Idempotent.
+   */
+  shutdown(): Promise<void>;
+
+  /** Register a cleanup hook run during shutdown (after the DB is closed). */
+  onShutdown(hook: () => void | Promise<void>): void;
+
+  /**
+   * Install SIGTERM/SIGINT handlers that call shutdown() once. Returns a
+   * function that removes them. Call from your entrypoint, not from a library.
+   */
+  installSignalHandlers(signals?: NodeJS.Signals[]): () => void;
+
+  /**
    * Roll entity state for a chain back to the end of `blockNumber` and rewind the
    * checkpoint, using the reorg journal. Requires `reorg` to have been enabled.
    * Re-run sync()/subscribe() from `blockNumber + 1` to rebuild the canonical chain.
@@ -164,10 +199,22 @@ export async function createIndexer<S extends SchemaDefinition>(
   const log = config.logger ?? noopLogger;
   const store = await createStore(config.schema, config.sink, log);
   const registry = new HandlerRegistry();
-  let stats: IndexerStats = {
+  const freshStats = (): IndexerStats => ({
     eventsProcessed: 0, eventsDecoded: 0, eventsSkipped: 0, blocksProcessed: 0, lastBlock: 0,
     entitiesWritten: 0, entitiesUpdated: 0, entitiesDeleted: 0, writesByTable: {},
-  };
+    reorgs: 0, errors: 0,
+  });
+  let stats: IndexerStats = freshStats();
+
+  // Operability (M18): health-state machine, handler-latency histogram, tracer.
+  const lifecycle = new Lifecycle(config.lifecycle);
+  const handlerLatency = new Histogram();
+  const tracer = config.tracer ?? noopTracer;
+  const shutdownHooks: Array<() => void | Promise<void>> = [];
+  let liveUnsub: UnsubscribeFn | undefined;   // set while subscribed
+  let serveHandle: ServeHandle | undefined;   // set while serving
+  let inFlightBlock: Promise<unknown> = Promise.resolve();   // the current commitBlock
+  let shuttingDown = false;
 
   // Count entity writes for stats / metrics via the store's change feed.
   store.onChange((e) => {
@@ -265,14 +312,22 @@ export async function createIndexer<S extends SchemaDefinition>(
       block:    event.blockNumber,
       tx:       event.txHash,
     });
-    // TRACE: per-handler timing — only computed when log is trace-enabled.
+    // Per-handler timing feeds the latency histogram (and TRACE logs).
     const t0 = Date.now();
-    await registry.dispatch(event, makeContext(event) as HandlerContext);
+    try {
+      await registry.dispatch(event, makeContext(event) as HandlerContext);
+    } catch (err) {
+      stats.errors++;
+      lifecycle.recordError();
+      throw err;   // propagate — the block transaction must roll back (M10)
+    }
+    const dt = Date.now() - t0;
+    handlerLatency.observe(dt);
     log.trace('handler', 'dispatched', {
       event:      event.eventName,
       block:      event.blockNumber,
       tx:         event.txHash,
-      elapsed_ms: Date.now() - t0,
+      elapsed_ms: dt,
     });
   }
 
@@ -291,7 +346,9 @@ export async function createIndexer<S extends SchemaDefinition>(
   ): Promise<number> {
     stats.blocksProcessed++;
     const t0 = Date.now();
-    await config.sink.transaction(async () => {
+    const span = tracer.startSpan('op-index.block', { block: blockNumber, events: events.length });
+    // Expose the in-flight commit so shutdown() can await a clean block boundary.
+    const commit = config.sink.transaction(async () => {
       // Buffer every entity write for the block, then commit them as batched
       // multi-row upserts (M13) — all inside this one transaction, so atomicity
       // and exactly-once (M10) are unchanged. A thrown block rolls back here and
@@ -305,6 +362,13 @@ export async function createIndexer<S extends SchemaDefinition>(
       }
       await store.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, multichain ? currentChainId : undefined);
     });
+    inFlightBlock = commit;
+    try {
+      await commit;
+    } finally {
+      span.end();
+    }
+    lifecycle.recordBlock(currentChainId, blockNumber, tipBlock);
     if (reorgEnabled && finalityDepth > 0 && blockNumber - finalityDepth > 0) {
       await store.pruneReorgData(currentChainId, blockNumber - finalityDepth);
     }
@@ -318,6 +382,29 @@ export async function createIndexer<S extends SchemaDefinition>(
       );
     }
     return config.source;
+  }
+
+  async function doShutdown(): Promise<void> {
+    if (shuttingDown) { await inFlightBlock.catch(() => {}); return; }
+    shuttingDown = true;
+    lifecycle.draining();
+    log.info('indexer', 'shutdown: draining', {});
+    // 1. Stop pulling new blocks.
+    try { liveUnsub?.(); } catch { /* unsub best-effort */ }
+    liveUnsub = undefined;
+    // 2. Let the in-flight block finish committing (commits are atomic — M10).
+    await inFlightBlock.catch(() => { /* a failed block already rolled back */ });
+    // 3. Close the HTTP server, then the sink DB.
+    try { await serveHandle?.stop(); } catch (err) { log.warn('indexer', 'shutdown: server close failed', { err: String(err) }); }
+    serveHandle = undefined;
+    const closable = config.sink as unknown as { end?: () => Promise<void>; close?: () => void | Promise<void> };
+    try { await closable.end?.(); await closable.close?.(); } catch (err) { log.warn('indexer', 'shutdown: db close failed', { err: String(err) }); }
+    // 4. User cleanup hooks.
+    for (const hook of shutdownHooks) {
+      try { await hook(); } catch (err) { log.warn('indexer', 'shutdown: hook failed', { err: String(err) }); }
+    }
+    lifecycle.stopped();
+    log.info('indexer', 'shutdown: stopped', {});
   }
 
   return {
@@ -371,6 +458,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     async sync(fromBlock, toBlock, filters, knownTip) {
       const source = requireSource();
       await loadSourcesOnce();
+      lifecycle.start();
       const syncStart  = Date.now();
 
       // DEBUG: per-window framing. Consumers typically log an INFO
@@ -460,6 +548,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     subscribe(fromBlock, options) {
       const source = requireSource();
       void loadSourcesOnce();
+      lifecycle.start();
       // Track block transitions so onBlock handlers fire after each block's events.
       // The last block in a poll batch fires when the next batch brings a new block number.
       let lastBlock     = -1;
@@ -467,7 +556,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       let liveBuffer: ChainEvent[] = [];
       log.info('indexer', 'subscribe start', { from_block: fromBlock });
 
-      return source.subscribe(
+      liveUnsub = source.subscribe(
         fromBlock,
         async (event) => {
           if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
@@ -494,6 +583,8 @@ export async function createIndexer<S extends SchemaDefinition>(
                 chain: event.chainId, block: event.blockNumber, rollback_to: safe,
                 expected_parent: prevStored, got_parent: event.parentHash,
               });
+              stats.reorgs++;
+              lifecycle.recordReorg();
               await store.rollbackToBlock(safe, event.chainId);
               await store.writeBlockCheckpoint(safe, undefined, undefined, multichain ? event.chainId : undefined);
               let cb = -1; let ct: number | undefined; let rbuf: ChainEvent[] = [];
@@ -511,9 +602,12 @@ export async function createIndexer<S extends SchemaDefinition>(
         },
         { pollIntervalMs: options?.pollIntervalMs },
       );
+      return liveUnsub;
     },
 
     async rollbackTo(blockNumber, chainId = 0) {
+      stats.reorgs++;
+      lifecycle.recordReorg();
       await store.rollbackToBlock(blockNumber, chainId);
       await store.writeBlockCheckpoint(blockNumber, undefined, undefined, multichain ? chainId : undefined);
     },
@@ -527,10 +621,32 @@ export async function createIndexer<S extends SchemaDefinition>(
     },
 
     resetStats() {
-      stats = {
-        eventsProcessed: 0, eventsDecoded: 0, eventsSkipped: 0, blocksProcessed: 0, lastBlock: 0,
-        entitiesWritten: 0, entitiesUpdated: 0, entitiesDeleted: 0, writesByTable: {},
-      };
+      stats = freshStats();
+      handlerLatency.reset();
+    },
+
+    health() {
+      return lifecycle.health();
+    },
+
+    onShutdown(hook) {
+      shutdownHooks.push(hook);
+    },
+
+    shutdown() {
+      return doShutdown();
+    },
+
+    installSignalHandlers(signals = ['SIGTERM', 'SIGINT']) {
+      const handlers = signals.map((sig) => {
+        const h = (): void => {
+          log.info('indexer', 'signal received', { signal: sig });
+          void doShutdown().then(() => process.exit(0));
+        };
+        process.on(sig, h);
+        return [sig, h] as const;
+      });
+      return () => { for (const [sig, h] of handlers) process.off(sig, h); };
     },
 
     async serve(options) {
@@ -538,18 +654,26 @@ export async function createIndexer<S extends SchemaDefinition>(
         subscriptions: options?.subscriptions,
         maxPageSize: options?.maxPageSize,
       });
-      // Default /health + /metrics expose the live indexer stats.
-      const serveOptions = { ...options, status: options?.status ?? ((): Record<string, unknown> => ({ ...stats })) };
+      // Default /health + /metrics expose live stats + the health-state machine
+      // + the handler-latency histogram. A caller can override `status` entirely.
+      const defaultStatus = (): Record<string, unknown> => ({
+        ...stats,
+        health: lifecycle.health(),
+        handlerLatencyMs: handlerLatency.snapshot(),
+      });
+      const serveOptions = { ...options, status: options?.status ?? defaultStatus };
       const { server, url } = startGraphQLServer(gqlSchema, serveOptions);
       if (options?.subscriptions) {
         await startSubscriptionServer(gqlSchema, server);
       }
-      return {
+      const handle: ServeHandle = {
         url,
         stop: () => new Promise((resolve, reject) =>
           server.close((err) => (err ? reject(err) : resolve())),
         ),
       };
+      serveHandle = handle;
+      return handle;
     },
   };
 }
