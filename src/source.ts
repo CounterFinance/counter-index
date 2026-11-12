@@ -17,6 +17,21 @@ export interface EventSourceFilters {
   eventNames?: string[];
 }
 
+/**
+ * Optional capability: a source whose watched contract set can grow at runtime.
+ * `indexer.onFactory(...)` calls `addAddress` when it discovers a child contract,
+ * so the source starts including its logs. Sources that can't (or don't need to)
+ * filter by address simply don't implement this.
+ */
+export interface DynamicSource {
+  addAddress(address: string): void;
+}
+
+/** Whether a source supports runtime address discovery. */
+export function isDynamicSource(source: unknown): source is DynamicSource {
+  return typeof (source as Partial<DynamicSource>).addAddress === 'function';
+}
+
 export interface EventSource {
   /**
    * Backfill: stream all events in [fromBlock, toBlock] inclusive, ordered by

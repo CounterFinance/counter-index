@@ -33,6 +33,8 @@ export {
   type EventSource,
   type EventSourceFilters,
   type UnsubscribeFn,
+  type DynamicSource,
+  isDynamicSource,
 } from './source.js';
 
 // --- Core types ------------------------------------------------------------
