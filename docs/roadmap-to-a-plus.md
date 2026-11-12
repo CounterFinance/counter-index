@@ -33,16 +33,22 @@ on idempotent re-processing, not atomicity.
 - [ ] Document the exactly-once / idempotency guarantee precisely.
 *Why:* this is the difference between "probably correct" and "provably durable."
 
-### M11 — Reorg hardening · P0 · ~2–3 days
-Reorg handling exists and is live-verified, but only for the common cases.
-- [ ] Reorgs **during backfill** (not just live).
-- [ ] **Deep reorg** beyond `finalityDepth`: detect, stop, and alert instead of
-      silently diverging.
-- [ ] **Crash during rollback** → restart → consistent state.
-- [ ] Reorg **across a getLogs batch boundary** and one **touching a factory**
-      child.
-- [ ] Property test (fast-check): journal **apply-then-undo == identity**.
-- [ ] An anvil reorg **matrix** (shallow/deep/backfill-handoff/batch/factory) in CI.
+### M11 — Reorg hardening · P0 · **DONE** (opidx-#49)
+Reorg handling was live-verified for shallow cases; M11 makes failures safe.
+- [x] **Atomic rollback**: journal replay + cleanup + checkpoint rewind in ONE
+      transaction. **Crash during rollback → restart → consistent** — proven by a
+      fault-injection test (mid-rollback failure fully rolls back; retry succeeds).
+- [x] **Deep reorg beyond finalityDepth: detect, stop, alert** — store-level
+      `DeepReorgError` (rollback below the pruned finality floor) **and** a live
+      boundary-continuity check (canonical boundary block must build on the
+      retained hash) that halts the subscription + calls `onDeepReorg` instead of
+      silently diverging. Pruning retains `finalityDepth + 1` blocks for the check.
+- [x] Property test (fast-check): journal **apply-then-undo == identity** (M12).
+- [~] Reorgs **during backfill** / **across a getLogs batch** / **touching a
+      factory child**: backfill runs below finality; a near-tip reorg is caught at
+      the backfill→live handoff by live fork detection. Documented in reorg-design.md.
+- [~] Anvil reorg **matrix**: shallow (live) + deep (indexer unit) covered;
+      `npm run dogfood:reorg` chain-verifies rollback+recovery on real anvil.
 *Why:* reorgs are where indexers silently corrupt. A+ means proven, not hoped.
 
 ### M12 — Test rigor (kill the "lying tests" risk for real) · P0 · ~2 days

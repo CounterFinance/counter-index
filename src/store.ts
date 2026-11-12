@@ -30,6 +30,26 @@ export interface StoreChangeEvent {
   operation: 'set' | 'update' | 'delete';
 }
 
+/**
+ * Thrown when a reorg would need to roll back below the retained finality window
+ * — the journal for those blocks was already pruned, so a correct rollback is
+ * impossible. The indexer surfaces this instead of silently diverging; the
+ * operator must widen `finalityDepth` or re-sync the affected range.
+ */
+export class DeepReorgError extends Error {
+  constructor(
+    readonly requestedBlock: number,
+    readonly retainedFloor: number,
+    readonly chainId: number,
+  ) {
+    super(
+      `Deep reorg on chain ${chainId}: rollback to block ${requestedBlock} needs journal below the retained floor ` +
+      `(oldest retained block ${retainedFloor}). The fork is deeper than finalityDepth — increase finalityDepth or re-sync.`,
+    );
+    this.name = 'DeepReorgError';
+  }
+}
+
 /** Comparison operators a {@link StoreFilter} can use (pushed into SQL). */
 export type FilterOp = 'eq' | 'not' | 'gt' | 'lt' | 'gte' | 'lte' | 'contains' | 'starts_with' | 'ends_with' | 'in';
 
@@ -509,6 +529,27 @@ export async function createStore(
     return schema.getEntity(entity); // throws if unknown
   }
 
+  /** Write/advance the checkpoint row. Shared by writeBlockCheckpoint + rollback. */
+  async function writeCheckpointRow(blockNumber: number, tipBlock: number | undefined, blockTimestamp: number | undefined, metaChainId: number | undefined): Promise<void> {
+    const now = Date.now();
+    const metaId = checkpointId(metaChainId);
+    if (dialect === 'sqlite') {
+      await adapter.run(
+        `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+      );
+    } else {
+      await adapter.run(
+        `INSERT INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET
+           last_block = EXCLUDED.last_block, tip_block = EXCLUDED.tip_block,
+           last_block_ts = EXCLUDED.last_block_ts, updated_at = EXCLUDED.updated_at`,
+        [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+      );
+    }
+  }
+
   // Change notification — simple pub/sub, no external dependency
   const changeHandlers = new Set<(event: StoreChangeEvent) => void>();
 
@@ -907,25 +948,7 @@ export async function createStore(
     },
 
     async writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId) {
-      const now = Date.now();
-      const metaId = checkpointId(chainId);
-      if (dialect === 'sqlite') {
-        await adapter.run(
-          `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
-          [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
-        );
-      } else {
-        await adapter.run(
-          `INSERT INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (id) DO UPDATE SET
-             last_block    = EXCLUDED.last_block,
-             tip_block     = EXCLUDED.tip_block,
-             last_block_ts = EXCLUDED.last_block_ts,
-             updated_at    = EXCLUDED.updated_at`,
-          [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
-        );
-      }
+      await writeCheckpointRow(blockNumber, tipBlock, blockTimestamp, chainId);
     },
 
     async readCheckpoint(chainId) {
@@ -952,31 +975,53 @@ export async function createStore(
     },
 
     async rollbackToBlock(blockNumber, chainId) {
-      // Replay the journal for blocks after the fork in reverse write order:
-      // restoring each prior row (last restore wins) leaves each entity at its
-      // state as of `blockNumber`. prior_json === null means "did not exist".
-      const entries = await adapter.all<{ entity: string; entity_id: string; prior_json: string | null }>(
-        `SELECT entity, entity_id, prior_json FROM opindex_journal
-         WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}
-         ORDER BY seq DESC`,
-        [chainId, blockNumber],
+      // Deep-reorg guard (M11): if the blocks we must restore (> blockNumber)
+      // were already pruned past finality, we CANNOT roll back correctly. Detect
+      // and stop loudly rather than silently diverge. The blockhash log is dense
+      // (one row per processed block) and pruned together with the journal, so
+      // its oldest row marks the retained floor.
+      const floorRow = await adapter.get<{ m: number | string | null }>(
+        `SELECT MIN(block_number) AS m FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)}`,
+        [chainId],
       );
-      for (const e of entries) {
-        if (e.prior_json === null) {
-          const cf = multichain ? ` AND ${col('chainId')} = ${param(dialect, 2)}` : '';
-          await adapter.run(`DELETE FROM ${tableName(e.entity)} WHERE "id" = ${param(dialect, 1)}${cf}`, multichain ? [e.entity_id, chainId] : [e.entity_id]);
-        } else {
-          await restoreRaw(e.entity, JSON.parse(e.prior_json, bufRevive) as Record<string, unknown>);
-        }
+      const floor = floorRow?.m != null ? Number(floorRow.m) : null;
+      if (floor !== null && blockNumber + 1 < floor) {
+        throw new DeepReorgError(blockNumber, floor, chainId);
       }
-      await adapter.run(
-        `DELETE FROM opindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
-        [chainId, blockNumber],
-      );
-      await adapter.run(
-        `DELETE FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
-        [chainId, blockNumber],
-      );
+
+      // ATOMIC rollback (M11): the journal replay, the journal/blockhash cleanup
+      // AND the checkpoint rewind all run in ONE transaction. A crash mid-rollback
+      // rolls the whole thing back — on restart the journal is intact and the
+      // rollback simply re-runs, so state can never half-rewind. The checkpoint is
+      // rewound here (not by the caller) so it can't diverge from the data.
+      await adapter.transaction(async () => {
+        // Replay the journal for blocks after the fork in reverse write order:
+        // restoring each prior row (last restore wins) leaves each entity at its
+        // state as of `blockNumber`. prior_json === null means "did not exist".
+        const entries = await adapter.all<{ entity: string; entity_id: string; prior_json: string | null }>(
+          `SELECT entity, entity_id, prior_json FROM opindex_journal
+           WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}
+           ORDER BY seq DESC`,
+          [chainId, blockNumber],
+        );
+        for (const e of entries) {
+          if (e.prior_json === null) {
+            const cf = multichain ? ` AND ${col('chainId')} = ${param(dialect, 2)}` : '';
+            await adapter.run(`DELETE FROM ${tableName(e.entity)} WHERE "id" = ${param(dialect, 1)}${cf}`, multichain ? [e.entity_id, chainId] : [e.entity_id]);
+          } else {
+            await restoreRaw(e.entity, JSON.parse(e.prior_json, bufRevive) as Record<string, unknown>);
+          }
+        }
+        await adapter.run(
+          `DELETE FROM opindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+          [chainId, blockNumber],
+        );
+        await adapter.run(
+          `DELETE FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+          [chainId, blockNumber],
+        );
+        await writeCheckpointRow(blockNumber, undefined, undefined, multichain ? chainId : undefined);
+      });
     },
 
     async recordBlockHash(chainId, blockNumber, blockHash) {
