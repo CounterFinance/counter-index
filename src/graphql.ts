@@ -22,7 +22,7 @@
  */
 
 import { createServer } from 'node:http';
-import type { Server } from 'node:http';
+import type { Server, ServerResponse } from 'node:http';
 import {
   GraphQLSchema,
   GraphQLObjectType,
@@ -36,9 +36,10 @@ import {
   GraphQLNonNull,
   GraphQLList,
   graphql,
+  parse,
   Kind,
 } from 'graphql';
-import type { GraphQLFieldConfigMap, GraphQLInputFieldConfigMap, GraphQLEnumValueConfigMap } from 'graphql';
+import type { GraphQLFieldConfigMap, GraphQLInputFieldConfigMap, GraphQLEnumValueConfigMap, DocumentNode, SelectionNode } from 'graphql';
 import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
 import type { EntityStore } from './store.js';
 
@@ -64,6 +65,31 @@ export interface ServeOptions {
    * gauges `opindex_<key>{key="<sub>"}`. Booleans map to 0/1.
    */
   status?: () => Record<string, unknown>;
+  /** Max rows a connection's `first` can return. Default 1000. */
+  maxPageSize?: number;
+  /** Reject queries whose selection-set nesting exceeds this. Default 12. */
+  maxQueryDepth?: number;
+  /** Require `Authorization: Bearer <token>` on POST /graphql when set. */
+  auth?: string;
+  /** Simple per-IP rate limit for POST /graphql. */
+  rateLimit?: { windowMs: number; max: number };
+}
+
+/** Max selection-set nesting depth of a GraphQL document (DoS guard). */
+function queryDepth(document: DocumentNode): number {
+  let max = 0;
+  const walk = (selections: readonly SelectionNode[] | undefined, depth: number): void => {
+    if (!selections) return;
+    if (depth > max) max = depth;
+    for (const sel of selections) {
+      if (sel.kind === Kind.FIELD && sel.selectionSet) walk(sel.selectionSet.selections, depth + 1);
+      else if (sel.kind === Kind.INLINE_FRAGMENT && sel.selectionSet) walk(sel.selectionSet.selections, depth);
+    }
+  };
+  for (const def of document.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION) walk(def.selectionSet.selections, 1);
+  }
+  return max;
 }
 
 /** Render a flat/one-level-nested status map as Prometheus exposition text. */
@@ -371,8 +397,10 @@ function makePushStream<T>(): PushStream<T> {
 export function buildGraphQLSchema(
   schema: Schema<SchemaDefinition>,
   store: EntityStore,
-  options: { subscriptions?: boolean } = {},
+  options: { subscriptions?: boolean; maxPageSize?: number } = {},
 ): GraphQLSchema {
+  // Hard cap on `first` — a client asking for first: 1e9 is clamped, not honoured.
+  const maxPageSize = Math.max(1, options.maxPageSize ?? 1000);
   const queryFields: GraphQLFieldConfigMap<unknown, unknown> = {};
   const subscriptionFields: GraphQLFieldConfigMap<unknown, unknown> = {};
 
@@ -447,8 +475,9 @@ export function buildGraphQLSchema(
           if (idx !== -1) records = records.slice(idx + 1);
         }
 
-        const hasNextPage = records.length > first;
-        const page = records.slice(0, first);
+        const cappedFirst = Math.min(Math.max(1, first), maxPageSize);
+        const hasNextPage = records.length > cappedFirst;
+        const page = records.slice(0, cappedFirst);
 
         const endCursor = page.length > 0
           ? encodeCursor(String(page[page.length - 1]['id']))
@@ -620,6 +649,16 @@ export function startGraphQLServer(
 ): { server: Server; url: string } {
   const port = options.port ?? 4000;
   const path = options.path ?? '/graphql';
+  const maxDepth = options.maxQueryDepth ?? 12;
+  const authToken = options.auth;
+  const rl = options.rateLimit;
+  const MAX_BODY = 1_000_000;                        // 1 MB request-body cap
+  const hits = new Map<string, number[]>();         // per-IP timestamps (rate limit)
+
+  const json = (res: ServerResponse, code: number, body: unknown): void => {
+    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
 
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost`);
@@ -663,27 +702,53 @@ export function startGraphQLServer(
 
     // GraphQL query — POST /graphql
     if (req.method === 'POST') {
+      // Rate limit (per-IP sliding window).
+      if (rl) {
+        const ip = req.socket.remoteAddress ?? 'unknown';
+        const now = Date.now();
+        const arr = (hits.get(ip) ?? []).filter((t) => now - t < rl.windowMs);
+        if (arr.length >= rl.max) { json(res, 429, { errors: [{ message: 'rate limit exceeded' }] }); return; }
+        arr.push(now); hits.set(ip, arr);
+      }
+      // Auth (optional bearer token).
+      if (authToken && req.headers['authorization'] !== `Bearer ${authToken}`) {
+        json(res, 401, { errors: [{ message: 'unauthorized' }] }); return;
+      }
+
       let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      let tooLarge = false;
+      req.on('data', (chunk: Buffer) => {
+        if (tooLarge) return;                                             // stop buffering past the cap
+        body += chunk.toString();
+        if (body.length > MAX_BODY) { tooLarge = true; body = ''; }       // body-size DoS guard; respond 413 on end
+      });
       req.on('end', () => {
         void (async () => {
+          if (tooLarge) { json(res, 413, { errors: [{ message: 'request body too large' }] }); return; }
           try {
             const { query, variables, operationName } = JSON.parse(body) as {
               query: string;
               variables?: Record<string, unknown>;
               operationName?: string;
             };
+            // Depth limit (nesting DoS guard) — before execution.
+            try {
+              const depth = queryDepth(parse(query));
+              if (depth > maxDepth) {
+                json(res, 400, { errors: [{ message: `query depth ${depth} exceeds max ${maxDepth}` }] });
+                return;
+              }
+            } catch { /* parse error — let graphql() produce the proper error below */ }
+
             const result = await graphql({
               schema:         gqlSchema,
               source:         query,
               variableValues: variables,
               operationName,
             });
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(result));
+            json(res, 200, result);
           } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ errors: [{ message: String(e) }] }));
+            json(res, 400, { errors: [{ message: String(e) }] });
           }
         })();
       });
