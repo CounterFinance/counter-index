@@ -138,8 +138,10 @@ round-trip is a full RTT.
 - [x] **Keyset cursor pagination** (`(sortValue, id) > cursor`), stable under
       concurrent writes; a past-the-end cursor now returns empty (old code
       wrongly returned page 1).
-- [ ] First-class **time-series helpers** (OHLC candles) — deferred to M16 (rich
-      schema); `onBlock` already supports hand-rolled candles.
+- [x] First-class **time-series helpers** — `defineCandles` maintains OHLCV per
+      time bucket incrementally (opidx-#56, raised by external review). The bucket
+      is SQL-indexed, so a candle time-range is an index range query (M17).
+      `npm run dogfood:candles`.
 - [x] **Row-cap + depth limiting** (done in M22); **field-count complexity** cap
       is the remaining safety item — deferred (depth + row-cap already bound cost).
 *Why:* the API is the product surface; it must be powerful, scalable *and* safe.
