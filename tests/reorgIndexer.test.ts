@@ -25,8 +25,10 @@ function ev(block: number, hash: string, parent: string, amount: bigint): ChainE
 
 /** Canonical: 1→2→3. Live feed: 1, then an ORPHANED 2' (amount 999), then canonical 3. */
 function reorgSource(): { source: EventSource; done: Promise<void> } {
-  const canonical = [ev(1, 'H1', 'H0', 100n), ev(2, 'H2', 'H1', 150n), ev(3, 'H3', 'H2', 200n)];
-  const live = [ev(1, 'H1', 'H0', 100n), ev(2, 'H2o', 'H1', 999n), ev(3, 'H3', 'H2', 200n)];
+  // Block 4 is a canonical trailing block: under M10 atomicity the tip block
+  // buffers until the next block confirms it, so block 3 commits when 4 arrives.
+  const canonical = [ev(1, 'H1', 'H0', 100n), ev(2, 'H2', 'H1', 150n), ev(3, 'H3', 'H2', 200n), ev(4, 'H4', 'H3', 200n)];
+  const live = [ev(1, 'H1', 'H0', 100n), ev(2, 'H2o', 'H1', 999n), ev(3, 'H3', 'H2', 200n), ev(4, 'H4', 'H3', 200n)];
   let resolve!: () => void;
   const done = new Promise<void>((r) => { resolve = r; });
   return {

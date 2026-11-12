@@ -277,18 +277,22 @@ export async function createIndexer<S extends SchemaDefinition>(
   }
 
   /**
-   * Flush a block: run onBlock handlers + write the checkpoint atomically.
-   * Returns elapsed_ms so callers can emit a log line at the level they want
-   * (DEBUG during sync, INFO during subscribe).
+   * Commit a block ATOMICALLY (M10): every entity write for the block, the
+   * onBlock handlers, the block-hash record and the checkpoint commit together
+   * inside ONE transaction. A crash mid-block rolls the whole block back, so the
+   * checkpoint never advances past partially-applied state — on restart the block
+   * is simply re-fetched and re-applied (exactly-once). Returns elapsed_ms.
    */
-  async function dispatchBlock(
+  async function commitBlock(
     blockNumber: number,
     blockTimestamp: number | undefined,
+    events: ChainEvent[],
     tipBlock?: number,
   ): Promise<number> {
     stats.blocksProcessed++;
     const t0 = Date.now();
     await config.sink.transaction(async () => {
+      for (const event of events) await dispatch(event);
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
       if (reorgEnabled && currentBlockHash) {
         await store.recordBlockHash(currentChainId, blockNumber, currentBlockHash);
@@ -335,26 +339,25 @@ export async function createIndexer<S extends SchemaDefinition>(
     async processEvents(events) {
       let currentBlock = -1;
       let currentTimestamp: number | undefined;
-      let eventsInBlock = 0;
+      let buffer: ChainEvent[] = [];
 
       for (const event of events) {
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+          const elapsedMs = await commitBlock(currentBlock, currentTimestamp, buffer);
           log.debug('indexer', 'block processed', {
-            block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+            block: currentBlock, events_in_block: buffer.length, elapsed_ms: elapsedMs,
           });
-          eventsInBlock = 0;
+          buffer = [];
         }
         currentBlock     = event.blockNumber;
         currentTimestamp = event.blockTimestamp;
-        eventsInBlock++;
-        await dispatch(event);
+        buffer.push(event);
       }
 
       if (currentBlock !== -1) {
-        const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp);
+        const elapsedMs = await commitBlock(currentBlock, currentTimestamp, buffer);
         log.debug('indexer', 'block processed', {
-          block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+          block: currentBlock, events_in_block: buffer.length, elapsed_ms: elapsedMs,
         });
       }
     },
@@ -378,7 +381,7 @@ export async function createIndexer<S extends SchemaDefinition>(
 
       let currentBlock = -1;
       let currentTimestamp: number | undefined;
-      let eventsInBlock = 0;
+      let buffer: ChainEvent[] = [];
 
       // Progress ticker — emit a log line every 5 seconds during long syncs.
       // This is the primary INFO heartbeat; skip the per-block / per-window lines
@@ -389,11 +392,11 @@ export async function createIndexer<S extends SchemaDefinition>(
 
       for await (const event of source.queryStream(fromBlock, toBlock, filters)) {
         if (currentBlock !== -1 && event.blockNumber !== currentBlock) {
-          const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp, knownTip);
+          const elapsedMs = await commitBlock(currentBlock, currentTimestamp, buffer, knownTip);
           log.debug('indexer', 'block processed', {
-            block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+            block: currentBlock, events_in_block: buffer.length, elapsed_ms: elapsedMs,
           });
-          eventsInBlock = 0;
+          buffer = [];
 
           const now = Date.now();
           if (now - lastProgressAt >= 5_000) {
@@ -416,15 +419,14 @@ export async function createIndexer<S extends SchemaDefinition>(
         }
         currentBlock     = event.blockNumber;
         currentTimestamp = event.blockTimestamp;
-        eventsInBlock++;
+        buffer.push(event);
         progressEvents++;
-        await dispatch(event);
       }
 
       if (currentBlock !== -1) {
-        const elapsedMs = await dispatchBlock(currentBlock, currentTimestamp, knownTip);
+        const elapsedMs = await commitBlock(currentBlock, currentTimestamp, buffer, knownTip);
         log.debug('indexer', 'block processed', {
-          block: currentBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+          block: currentBlock, events_in_block: buffer.length, elapsed_ms: elapsedMs,
         });
       }
 
@@ -456,8 +458,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       // The last block in a poll batch fires when the next batch brings a new block number.
       let lastBlock     = -1;
       let lastTimestamp: number | undefined;
-
-      let eventsInBlock = 0;
+      let liveBuffer: ChainEvent[] = [];
       log.info('indexer', 'subscribe start', { from_block: fromBlock });
 
       return source.subscribe(
@@ -466,13 +467,14 @@ export async function createIndexer<S extends SchemaDefinition>(
           if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
             // In live mode, the block we just finished IS effectively our tip — no backlog.
             // Passing lastBlock as tipBlock keeps blocksBehind=0 and synced=true.
-            const elapsedMs = await dispatchBlock(lastBlock, lastTimestamp, lastBlock);
-            // INFO: live-mode heartbeat. At ~1 block / 10s this is ~6 lines/min,
-            // giving a clear "still alive" signal without flooding logs.
+            // The just-finished block IS our frontier (one-behind the tip arriving
+            // now); committing it atomically here means the tip block stays
+            // uncommitted until the next block confirms — safer for reorgs.
+            const elapsedMs = await commitBlock(lastBlock, lastTimestamp, liveBuffer, lastBlock);
             log.info('indexer', 'live block', {
-              block: lastBlock, events_in_block: eventsInBlock, elapsed_ms: elapsedMs,
+              block: lastBlock, events_in_block: liveBuffer.length, elapsed_ms: elapsedMs,
             });
-            eventsInBlock = 0;
+            liveBuffer = [];
           }
 
           // Fork detection: a new block whose parentHash disagrees with the hash
@@ -488,19 +490,18 @@ export async function createIndexer<S extends SchemaDefinition>(
               });
               await store.rollbackToBlock(safe, event.chainId);
               await store.writeBlockCheckpoint(safe, undefined, undefined, multichain ? event.chainId : undefined);
-              let cb = -1; let ct: number | undefined;
+              let cb = -1; let ct: number | undefined; let rbuf: ChainEvent[] = [];
               for await (const e of source.queryStream(safe + 1, event.blockNumber - 1, options?.filters)) {
-                if (cb !== -1 && e.blockNumber !== cb) await dispatchBlock(cb, ct, cb);
-                cb = e.blockNumber; ct = e.blockTimestamp; await dispatch(e);
+                if (cb !== -1 && e.blockNumber !== cb) { await commitBlock(cb, ct, rbuf, cb); rbuf = []; }
+                cb = e.blockNumber; ct = e.blockTimestamp; rbuf.push(e);
               }
-              if (cb !== -1) await dispatchBlock(cb, ct, cb);
+              if (cb !== -1) await commitBlock(cb, ct, rbuf, cb);
             }
           }
 
           lastBlock     = event.blockNumber;
           lastTimestamp = event.blockTimestamp;
-          eventsInBlock++;
-          await dispatch(event);
+          liveBuffer.push(event);
         },
         { pollIntervalMs: options?.pollIntervalMs },
       );
