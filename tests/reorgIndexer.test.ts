@@ -10,6 +10,7 @@ import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 import { SqliteAdapter } from '../src/adapter.js';
+import { DeepReorgError } from '../src/store.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 import type { ChainEvent } from '../src/types.js';
 
@@ -64,5 +65,46 @@ describe('indexer automatic reorg recovery', () => {
     // the orphaned 999.
     const row = await indexer.store.get('Balance', 'alice');
     expect(row!.amount).toBe(200n);
+  });
+
+  it('halts loudly on a reorg deeper than finalityDepth (never silently diverges)', async () => {
+    // finalityDepth=2. Live builds 1..5 (hashes H1..H5), then block 6 forks.
+    // Rollback clamps to safe=3, but the canonical chain forked at block 3 — the
+    // re-indexed block 4 does NOT build on our retained H3, so it's a DEEP reorg.
+    const live = [
+      ev(1, 'H1', 'H0', 100n), ev(2, 'H2', 'H1', 100n), ev(3, 'H3', 'H2', 100n),
+      ev(4, 'H4', 'H3', 100n), ev(5, 'H5', 'H4', 100n),
+      ev(6, 'H6', 'Hbad', 100n),   // parentHash ≠ stored H5 → reorg at 6, safe=3
+    ];
+    // Canonical re-index [4,5] forked at block 3: block 4 builds on H3c, not H3.
+    const canonical = [ev(4, 'H4c', 'H3c', 100n), ev(5, 'H5c', 'H4c', 100n)];
+    let resolve!: () => void;
+    const done = new Promise<void>((r) => { resolve = r; });
+    const source: EventSource = {
+      async *queryStream(from: number, to: number) {
+        for (const e of canonical) if (e.blockNumber >= from && e.blockNumber <= to) yield e;
+      },
+      subscribe(_from: number, onEvent: (e: ChainEvent) => Promise<void>): UnsubscribeFn {
+        void (async () => { for (const e of live) await onEvent(e); resolve(); })();
+        return () => {};
+      },
+    };
+
+    let caught: DeepReorgError | undefined;
+    const indexer = await createIndexer({
+      schema, sink: new SqliteAdapter(new Database(':memory:')), source,
+      reorg: { finalityDepth: 2 }, onDeepReorg: (e) => { caught = e; },
+    });
+    indexer.on('Set', async (event, ctx) => {
+      const d = event.decoded!;
+      await ctx.store.set('Balance', d['holder'] as string, { holder: d['holder'] as string, amount: BigInt(d['amount'] as string) });
+    });
+
+    indexer.subscribe(1);
+    await done;
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(caught).toBeInstanceOf(DeepReorgError);
+    expect(indexer.stats.errors).toBeGreaterThanOrEqual(1);
   });
 });

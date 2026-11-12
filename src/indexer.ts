@@ -20,7 +20,7 @@
 
 import type { Schema, SchemaDefinition } from './schema.js';
 import type { TypedStore } from './store.js';
-import { createStore, scopeStoreToChain } from './store.js';
+import { createStore, scopeStoreToChain, DeepReorgError } from './store.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
 import { isDynamicSource } from './source.js';
@@ -55,6 +55,13 @@ export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   lifecycle?: LifecycleOptions;
   /** OpenTelemetry-shaped tracer hook (default: no-op). Emits a span per block. */
   tracer?: Tracer;
+  /**
+   * Called when a reorg is detected that is deeper than `finalityDepth` (the
+   * journal for those blocks was already pruned, so a correct rollback is
+   * impossible). The indexer halts the live subscription and marks itself
+   * errored; this hook lets you page an operator. Default: just log + halt.
+   */
+  onDeepReorg?: (err: DeepReorgError) => void;
 }
 
 export interface IndexerStats {
@@ -215,6 +222,7 @@ export async function createIndexer<S extends SchemaDefinition>(
   let serveHandle: ServeHandle | undefined;   // set while serving
   let inFlightBlock: Promise<unknown> = Promise.resolve();   // the current commitBlock
   let shuttingDown = false;
+  let halted = false;   // set on an unrecoverable deep reorg — stops processing
 
   // Count entity writes for stats / metrics via the store's change feed.
   store.onChange((e) => {
@@ -369,8 +377,11 @@ export async function createIndexer<S extends SchemaDefinition>(
       span.end();
     }
     lifecycle.recordBlock(currentChainId, blockNumber, tipBlock);
-    if (reorgEnabled && finalityDepth > 0 && blockNumber - finalityDepth > 0) {
-      await store.pruneReorgData(currentChainId, blockNumber - finalityDepth);
+    // Retain one block MORE than finalityDepth: a reorg rolls back to
+    // `tip - finalityDepth`, and the boundary-continuity guard (M11) needs that
+    // block's hash still present to tell a deep reorg from a shallow one.
+    if (reorgEnabled && finalityDepth > 0 && blockNumber - finalityDepth - 1 > 0) {
+      await store.pruneReorgData(currentChainId, blockNumber - finalityDepth - 1);
     }
     return Date.now() - t0;
   }
@@ -559,6 +570,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       liveUnsub = source.subscribe(
         fromBlock,
         async (event) => {
+          if (halted) return;   // an unrecoverable deep reorg stopped processing
           if (lastBlock !== -1 && event.blockNumber !== lastBlock) {
             // In live mode, the block we just finished IS effectively our tip — no backlog.
             // Passing lastBlock as tipBlock keeps blocksBehind=0 and synced=true.
@@ -585,10 +597,43 @@ export async function createIndexer<S extends SchemaDefinition>(
               });
               stats.reorgs++;
               lifecycle.recordReorg();
-              await store.rollbackToBlock(safe, event.chainId);
-              await store.writeBlockCheckpoint(safe, undefined, undefined, multichain ? event.chainId : undefined);
+              try {
+                await store.rollbackToBlock(safe, event.chainId);   // rewinds the checkpoint atomically (M11)
+              } catch (err) {
+                if (err instanceof DeepReorgError) {
+                  // Deeper than finalityDepth — we can't roll back correctly. Halt
+                  // loudly instead of silently diverging; the operator must act.
+                  log.error('indexer', 'deep reorg beyond finalityDepth — halting', {
+                    chain: event.chainId, block: event.blockNumber, retained_floor: err.retainedFloor,
+                  });
+                  stats.errors++;
+                  lifecycle.recordError();
+                  halted = true;
+                  liveUnsub?.();
+                  config.onDeepReorg?.(err);
+                  return;
+                }
+                throw err;
+              }
+              // Boundary-continuity guard (M11): we rolled back only to `safe`
+              // (clamped to finalityDepth). If the canonical chain's first block
+              // after `safe` does NOT build on our retained `safe` hash, the true
+              // fork is OLDER than finalityDepth — re-indexing from here would
+              // silently diverge. Detect it and halt loudly.
+              const safeHash = await store.getBlockHash(event.chainId, safe);
+              let boundaryChecked = false;
               let cb = -1; let ct: number | undefined; let rbuf: ChainEvent[] = [];
               for await (const e of source.queryStream(safe + 1, event.blockNumber - 1, options?.filters)) {
+                if (!boundaryChecked && e.blockNumber === safe + 1 && e.parentHash && safeHash && e.parentHash !== safeHash) {
+                  log.error('indexer', 'deep reorg beyond finalityDepth — halting', {
+                    chain: event.chainId, block: event.blockNumber, fork_before: safe,
+                  });
+                  stats.errors++; lifecycle.recordError();
+                  halted = true; liveUnsub?.();
+                  config.onDeepReorg?.(new DeepReorgError(safe, safe + 1, event.chainId));
+                  return;
+                }
+                boundaryChecked = true;
                 if (cb !== -1 && e.blockNumber !== cb) { await commitBlock(cb, ct, rbuf, cb); rbuf = []; }
                 cb = e.blockNumber; ct = e.blockTimestamp; rbuf.push(e);
               }
@@ -608,8 +653,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     async rollbackTo(blockNumber, chainId = 0) {
       stats.reorgs++;
       lifecycle.recordReorg();
-      await store.rollbackToBlock(blockNumber, chainId);
-      await store.writeBlockCheckpoint(blockNumber, undefined, undefined, multichain ? chainId : undefined);
+      await store.rollbackToBlock(blockNumber, chainId);   // atomic: rewinds checkpoint too (M11)
     },
 
     get store() {
