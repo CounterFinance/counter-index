@@ -283,17 +283,45 @@ function buildOrderByEnum(entityName: string, def: EntityDef): GraphQLEnumType {
   return new GraphQLEnumType({ name: `${entityName}_orderBy`, values });
 }
 
-function buildEntityType(entityName: string, def: EntityDef): GraphQLObjectType {
-  const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {
-    id: { type: new GraphQLNonNull(GraphQLString) },
-  };
-  for (const [fieldName, fieldDef] of Object.entries(def)) {
-    const base = gqlOutputType(fieldDef.type);
-    fields[fieldName] = {
-      type: fieldDef.optional ? base : new GraphQLNonNull(base),
-    };
-  }
-  return new GraphQLObjectType({ name: entityName, fields });
+function buildEntityType(
+  entityName: string,
+  def: EntityDef,
+  types: Map<string, GraphQLObjectType>,
+  store: EntityStore,
+  schema: Schema<SchemaDefinition>,
+): GraphQLObjectType {
+  // Lazy fields: a `ref` field resolves to another entity type that may not be
+  // built yet, so the thunk is evaluated after every type is registered.
+  return new GraphQLObjectType({
+    name: entityName,
+    fields: () => {
+      const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {
+        id: { type: new GraphQLNonNull(GraphQLString) },
+      };
+      for (const [fieldName, fieldDef] of Object.entries(def)) {
+        if (fieldDef.ref) {
+          // Nested resolution: expose the referenced entity (nullable — a dangling
+          // id resolves to null), looked up by the stored id (scoped per chain).
+          const refEntity = fieldDef.ref;
+          const refType = types.get(refEntity)!;
+          const refDef = schema.getEntity(refEntity);
+          fields[fieldName] = {
+            type: refType,
+            resolve: async (src: Record<string, unknown>) => {
+              const refId = src[fieldName];
+              if (typeof refId !== 'string' || refId === '') return null;
+              const rec = await store.get(refEntity, refId, src['chainId'] as number | undefined);
+              return rec ? serialiseRecord(rec, refDef) : null;
+            },
+          };
+        } else {
+          const base = gqlOutputType(fieldDef.type);
+          fields[fieldName] = { type: fieldDef.optional ? base : new GraphQLNonNull(base) };
+        }
+      }
+      return fields;
+    },
+  });
 }
 
 function buildConnectionType(entityName: string, entityType: GraphQLObjectType): GraphQLObjectType {
@@ -416,9 +444,16 @@ export function buildGraphQLSchema(
   const queryFields: GraphQLFieldConfigMap<unknown, unknown> = {};
   const subscriptionFields: GraphQLFieldConfigMap<unknown, unknown> = {};
 
+  // Build every entity type first so `ref` fields can resolve to one another
+  // (the field thunks are evaluated lazily, after the whole map is populated).
+  const entityTypes = new Map<string, GraphQLObjectType>();
+  for (const entityName of schema.entityNames()) {
+    entityTypes.set(entityName, buildEntityType(entityName, schema.getEntity(entityName), entityTypes, store, schema));
+  }
+
   for (const entityName of schema.entityNames()) {
     const def        = schema.getEntity(entityName);
-    const entityType = buildEntityType(entityName, def);
+    const entityType = entityTypes.get(entityName)!;
     const connType   = buildConnectionType(entityName, entityType);
     const filterType = buildFilterType(entityName, def);
     const orderEnum  = buildOrderByEnum(entityName, def);

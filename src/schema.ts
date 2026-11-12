@@ -25,6 +25,14 @@ export interface FieldDef {
   optional?: boolean;
   /** Create a secondary index on this column (speeds up where/orderBy on it). */
   index?: boolean;
+  /** Enforce uniqueness on this column (a UNIQUE index). Implies `index`. */
+  unique?: boolean;
+  /**
+   * This field holds the `id` of another entity (a `string` column). GraphQL
+   * exposes it as the nested referenced entity, resolved on demand — e.g.
+   * `swap.pool { token0 }`. The named entity must exist in the same schema.
+   */
+  ref?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +91,14 @@ function validateSchema(def: SchemaDefinition): void {
         throw new Error(
           `Entity "${entityName}" field "${fieldName}": unknown type "${field.type}"`,
         );
+      }
+      if (field.ref !== undefined) {
+        if (field.type !== 'string') {
+          throw new Error(`Entity "${entityName}" field "${fieldName}": a ref field must be type "string" (holds the referenced id)`);
+        }
+        if (!names.includes(field.ref)) {
+          throw new Error(`Entity "${entityName}" field "${fieldName}": ref "${field.ref}" is not a known entity`);
+        }
       }
     }
   }
