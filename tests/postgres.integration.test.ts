@@ -91,6 +91,28 @@ suite('Postgres integration (real connection)', () => {
     expect(await store.count('Tok')).toBe(499);
   });
 
+  it('query pushdown: filters, bigint NUMERIC order, keyset — on real Postgres', async () => {
+    const schema = defineSchema({ Pos: { amount: { type: 'bigint', index: true }, owner: { type: 'string', index: true } } }) as Schema<SchemaDefinition>;
+    const store = await createStore(schema, adapter);
+    // Big values where lexical != numeric (and beyond 2^53, so REAL would be wrong).
+    await store.set('Pos', 'a', { amount: 2n, owner: 'x' });
+    await store.set('Pos', 'b', { amount: 100000000000000000009n, owner: 'y' });
+    await store.set('Pos', 'c', { amount: 30n, owner: 'x' });
+    await store.set('Pos', 'd', { amount: 100000000000000000008n, owner: 'x' });
+
+    // Numeric order (Postgres NUMERIC is exact for uint256-scale values).
+    expect((await store.query('Pos', { orderBy: 'amount', orderDirection: 'asc' })).map((r) => r.id)).toEqual(['a', 'c', 'd', 'b']);
+    // Filter + range.
+    expect((await store.query('Pos', { where: [{ field: 'owner', op: 'eq', value: 'x' }, { field: 'amount', op: 'gt', value: 2n }] })).map((r) => r.id).sort()).toEqual(['c', 'd']);
+    expect(await store.countWhere('Pos', [{ field: 'owner', op: 'eq', value: 'x' }])).toBe(3);
+
+    // Keyset page 2 (desc).
+    const p1 = await store.query('Pos', { orderBy: 'amount', orderDirection: 'desc', limit: 2 });
+    expect(p1.map((r) => r.id)).toEqual(['b', 'd']);
+    const p2 = await store.query('Pos', { orderBy: 'amount', orderDirection: 'desc', limit: 2, cursor: { sortValue: p1[1].amount, id: p1[1].id as string } });
+    expect(p2.map((r) => r.id)).toEqual(['c', 'a']);
+  });
+
   it('checkpoints read/write', async () => {
     const schema = defineSchema({ Z: { v: { type: 'int' } } }) as Schema<SchemaDefinition>;
     const store = await createStore(schema, adapter);

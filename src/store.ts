@@ -30,6 +30,35 @@ export interface StoreChangeEvent {
   operation: 'set' | 'update' | 'delete';
 }
 
+/** Comparison operators a {@link StoreFilter} can use (pushed into SQL). */
+export type FilterOp = 'eq' | 'not' | 'gt' | 'lt' | 'gte' | 'lte' | 'contains' | 'starts_with' | 'ends_with' | 'in';
+
+/** One parameterised predicate: `field op value`. `field` is validated against the schema. */
+export interface StoreFilter {
+  field: string;
+  op: FilterOp;
+  value: unknown;
+}
+
+/**
+ * A server-side query pushed entirely into SQL — no whole-table load. Filters,
+ * ordering and a keyset cursor become a parameterised
+ * `WHERE … ORDER BY … LIMIT` statement. Field names are validated against the
+ * schema (never interpolated), so there is no injection surface.
+ */
+export interface QueryOptions {
+  where?: StoreFilter[];
+  /** Schema field to order by (or `id`). Defaults to `id`. */
+  orderBy?: string;
+  orderDirection?: 'asc' | 'desc';
+  /** Max rows to return (fetch `pageSize + 1` to detect a next page). */
+  limit?: number;
+  /** Keyset cursor — return rows strictly after `(sortValue, id)` in the order. */
+  cursor?: { sortValue: unknown; id: string };
+  /** Multichain: scope to one chain (added as a `chainId` predicate). */
+  chainId?: number;
+}
+
 export interface EntityStore {
   // `chainId` scopes the operation to one chain in a multichain schema (composite
   // (chainId, id) key); omit it for single-chain schemas.
@@ -58,6 +87,16 @@ export interface EntityStore {
     predicate: (record: Record<string, unknown>) => boolean,
     chainId?: number,
   ): Promise<Record<string, unknown>[]>;
+
+  /**
+   * Server-side query: filter, order and keyset-paginate entirely in SQL (no
+   * whole-table load). Powers the GraphQL connection resolver. Field names are
+   * validated against the schema; values are bound as parameters.
+   */
+  query(entity: string, opts: QueryOptions): Promise<Record<string, unknown>[]>;
+
+  /** Count entities matching `where` (same predicates as {@link query}), in SQL. */
+  countWhere(entity: string, where?: StoreFilter[], chainId?: number): Promise<number>;
 
   /**
    * Subscribe to all store mutations (set / update / delete).
@@ -132,6 +171,8 @@ export function scopeStoreToChain(base: EntityStore, chainId: number): EntitySto
     list(entity) { return base.list(entity, chainId); },
     count(entity) { return base.count(entity, chainId); },
     find(entity, predicate) { return base.find(entity, predicate, chainId); },
+    query(entity, opts) { return base.query(entity, { ...opts, chainId }); },
+    countWhere(entity, where) { return base.countWhere(entity, where, chainId); },
     onChange(handler) { return base.onChange(handler); },
     beginBatch() { base.beginBatch(); },
     flushBatch() { return base.flushBatch(); },
@@ -578,6 +619,91 @@ export async function createStore(
     logger.trace('store', 'flushBatch', { entities: sets.size + dels.size, rows, elapsed_ms: Date.now() - t0 });
   }
 
+  // --- Server-side query builder (M17): push filter/order/paginate into SQL --
+  // Field names are validated against the schema and emitted via col() (quoted,
+  // never interpolated from user input); values are bound as parameters. bigint
+  // is stored as TEXT, so range/order CAST to NUMERIC for numeric semantics —
+  // exact on Postgres; SQLite NUMERIC is exact to ~2^53, approximate beyond.
+  function validField(entity: string, def: EntityDef, field: string): FieldType {
+    if (field === 'id') return 'string';
+    const fd = def[field];
+    if (!fd) throw new Error(`Unknown field "${field}" on entity "${entity}"`);
+    return fd.type;
+  }
+  const numCast = (expr: string): string => `CAST(${expr} AS NUMERIC)`;
+  const likeEscape = (v: string): string => v.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+  interface WherePart { sql: string; params: unknown[]; next: number }
+
+  function buildWhere(entity: string, def: EntityDef, where: StoreFilter[] | undefined, chainId: number | undefined, start: number): WherePart {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    let n = start;
+    const ph = (): string => param(dialect, n++);
+    if (chainId !== undefined) { clauses.push(`${col('chainId')} = ${ph()}`); params.push(chainId); }
+    for (const f of where ?? []) {
+      const type = validField(entity, def, f.field);
+      if (f.op === 'in') {
+        const vals = Array.isArray(f.value) ? f.value : [f.value];
+        if (vals.length === 0) { clauses.push('1 = 0'); continue; }   // IN () matches nothing
+        const placeholders = vals.map((v) => { params.push(serialise(v, type, dialect)); return ph(); });
+        clauses.push(`${col(f.field)} IN (${placeholders.join(', ')})`);
+        continue;
+      }
+      if (f.op === 'contains' || f.op === 'starts_with' || f.op === 'ends_with') {
+        const e = likeEscape(String(f.value));
+        params.push(f.op === 'contains' ? `%${e}%` : f.op === 'starts_with' ? `${e}%` : `%${e}`);
+        clauses.push(`${col(f.field)} LIKE ${ph()} ESCAPE '\\'`);
+        continue;
+      }
+      params.push(serialise(f.value, type, dialect));
+      const p = ph();
+      const big = type === 'bigint';
+      const lhs = big ? numCast(col(f.field)) : col(f.field);
+      const rhs = big ? numCast(p) : p;
+      switch (f.op) {
+        case 'eq':  clauses.push(`${col(f.field)} = ${p}`); break;        // eq on TEXT bigint is exact + uses the index
+        case 'not': clauses.push(`${col(f.field)} <> ${p}`); break;
+        case 'gt':  clauses.push(`${lhs} > ${rhs}`); break;
+        case 'lt':  clauses.push(`${lhs} < ${rhs}`); break;
+        case 'gte': clauses.push(`${lhs} >= ${rhs}`); break;
+        case 'lte': clauses.push(`${lhs} <= ${rhs}`); break;
+      }
+    }
+    return { sql: clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '', params, next: n };
+  }
+
+  function orderExpr(field: string, type: FieldType): string {
+    return type === 'bigint' ? numCast(col(field)) : col(field);
+  }
+
+  /** `ORDER BY <field> <dir>, id <dir>` — the id tiebreaker keeps keyset paging stable. */
+  function orderClause(entity: string, def: EntityDef, orderBy: string | undefined, dir: 'asc' | 'desc'): string {
+    const d = dir === 'desc' ? 'DESC' : 'ASC';
+    if (!orderBy || orderBy === 'id') return ` ORDER BY "id" ${d}`;
+    const type = validField(entity, def, orderBy);
+    return ` ORDER BY ${orderExpr(orderBy, type)} ${d}, "id" ${d}`;
+  }
+
+  /** Keyset predicate: rows strictly after (sortValue, id) in the order. */
+  function keysetClause(entity: string, def: EntityDef, orderBy: string | undefined, dir: 'asc' | 'desc', cursor: { sortValue: unknown; id: string }, start: number): WherePart {
+    const params: unknown[] = [];
+    let n = start;
+    const ph = (): string => param(dialect, n++);
+    const cmp = dir === 'desc' ? '<' : '>';
+    if (!orderBy || orderBy === 'id') {
+      params.push(cursor.id);
+      return { sql: `"id" ${cmp} ${ph()}`, params, next: n };
+    }
+    const type = validField(entity, def, orderBy);
+    const oe = orderExpr(orderBy, type);
+    const big = type === 'bigint';
+    params.push(serialise(cursor.sortValue, type, dialect)); const s1 = big ? numCast(ph()) : ph();
+    params.push(serialise(cursor.sortValue, type, dialect)); const s2 = big ? numCast(ph()) : ph();
+    params.push(cursor.id); const idp = ph();
+    return { sql: `(${oe} ${cmp} ${s1} OR (${oe} = ${s2} AND "id" ${cmp} ${idp}))`, params, next: n };
+  }
+
   return {
     async get(entity, id, chainId) {
       const def = assertKnown(entity);
@@ -716,6 +842,35 @@ export async function createStore(
       const table = tableName(entity);
       const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
       const row = await adapter.get<{ n: number | string }>(`SELECT COUNT(*) AS n FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
+      return Number(row?.n ?? 0);   // Postgres returns COUNT(*) (bigint) as a string
+    },
+
+    async query(entity, opts) {
+      const def = assertKnown(entity);
+      if (batching) await flushWrites();
+      const table = tableName(entity);
+      const dir = opts.orderDirection ?? 'asc';
+      const w = buildWhere(entity, def, opts.where, opts.chainId, 1);
+      let sql = `SELECT * FROM ${table}${w.sql}`;
+      const params = [...w.params];
+      let n = w.next;
+      if (opts.cursor) {
+        const k = keysetClause(entity, def, opts.orderBy, dir, opts.cursor, n);
+        sql += `${w.sql ? ' AND' : ' WHERE'} ${k.sql}`;
+        params.push(...k.params); n = k.next;
+      }
+      sql += orderClause(entity, def, opts.orderBy, dir);
+      if (opts.limit !== undefined) { sql += ` LIMIT ${param(dialect, n++)}`; params.push(opts.limit); }
+      const rows = await adapter.all<Record<string, unknown>>(sql, params);
+      return rows.map((r) => deserialiseRow(r, def));
+    },
+
+    async countWhere(entity, where, chainId) {
+      const def = assertKnown(entity);
+      if (batching) await flushWrites();
+      const table = tableName(entity);
+      const w = buildWhere(entity, def, where, chainId, 1);
+      const row = await adapter.get<{ n: number | string }>(`SELECT COUNT(*) AS n FROM ${table}${w.sql}`, w.params);
       return Number(row?.n ?? 0);   // Postgres returns COUNT(*) (bigint) as a string
     },
 

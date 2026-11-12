@@ -61,6 +61,30 @@ Reading these honestly:
   one, and the crash-injection dogfood (`npm run dogfood:atomicity`) exercises the
   buffered path end-to-end — a mid-block crash still rolls the whole block back.
 
+## Query pushdown (M17) — the opidx-#42 DoS fix
+
+The GraphQL connection resolver used to call `store.list(entity)` — loading the
+**whole table** into memory — then filter/sort/paginate in JS. On a big table one
+query could OOM the process. `store.query()` now compiles the connection args into
+a parameterised `WHERE … ORDER BY … LIMIT` (keyset) statement; a `first: 20` page
+reads ~20 rows no matter the table size.
+
+`npm run bench:query` — `holder = 0x7, order by block, first 20` over **200 000** rows:
+
+| path | rows loaded | wall | added heap |
+|------|------------:|-----:|-----------:|
+| whole-table (old) | 200 000 | ~159 ms | ~18 MB |
+| SQL pushdown (new) | **20** | **~1 ms** | negligible |
+| reduction | **10 000× fewer** | **~154× faster** | — |
+
+The bench asserts the pushdown page is identical to the whole-table page. Notes:
+- **bigint** is stored as TEXT, so range/order `CAST(... AS NUMERIC)` — exact on
+  Postgres (verified at uint256 scale in `tests/postgres.integration.test.ts`),
+  exact to ~2^53 on SQLite. Equality/`_in` are exact TEXT compares everywhere.
+- Pagination is **keyset** (`(sortValue, id) > cursor`), not offset — stable under
+  concurrent writes, and a past-the-end cursor returns empty (the old code wrongly
+  returned page 1). Field/order names are schema-validated, never interpolated.
+
 ## Cross-tool comparison
 
 For apples-to-apples numbers against The Graph, Ponder, Subsquid, rindexer and
