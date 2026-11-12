@@ -22,7 +22,7 @@
  */
 
 import { createServer } from 'node:http';
-import type { Server, ServerResponse } from 'node:http';
+import type { Server, ServerResponse, IncomingMessage } from 'node:http';
 import {
   GraphQLSchema,
   GraphQLObjectType,
@@ -42,6 +42,7 @@ import {
 import type { GraphQLFieldConfigMap, GraphQLInputFieldConfigMap, GraphQLEnumValueConfigMap, DocumentNode, SelectionNode } from 'graphql';
 import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
 import type { EntityStore, StoreFilter, FilterOp } from './store.js';
+import type { ReadPathOptions, ReadRouter } from './serving.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -73,6 +74,12 @@ export interface ServeOptions {
   auth?: string;
   /** Simple per-IP rate limit for POST /graphql. */
   rateLimit?: { windowMs: number; max: number };
+  /**
+   * Serving-scale read path (opidx-#57): a cacheable REST projection, a
+   * structured SQL-over-HTTP query endpoint, and SSE live queries — all over the
+   * same SQL pushdown as GraphQL. See {@link ReadPathOptions}. Default: off.
+   */
+  readPath?: ReadPathOptions;
 }
 
 /** Max selection-set nesting depth of a GraphQL document (DoS guard). */
@@ -214,11 +221,11 @@ function opsForType(type: FieldType): readonly string[] {
 // ---------------------------------------------------------------------------
 
 /** A keyset cursor carries the order-by value + id, so paging is stable in SQL. */
-function encodeCursor(id: string, sortValue: string): string {
+export function encodeCursor(id: string, sortValue: string): string {
   return Buffer.from(JSON.stringify({ i: id, s: sortValue }), 'utf8').toString('base64');
 }
 
-function decodeCursor(cursor: string): { i: string; s: string } {
+export function decodeCursor(cursor: string): { i: string; s: string } {
   try {
     const o = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as { i?: unknown; s?: unknown };
     const str = (v: unknown): string => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
@@ -231,7 +238,7 @@ function decodeCursor(cursor: string): { i: string; s: string } {
 }
 
 /** Reconstruct a typed cursor sort value from its stringified form. */
-function coerceCursorValue(s: string, type: FieldType): unknown {
+export function coerceCursorValue(s: string, type: FieldType): unknown {
   switch (type) {
     case 'bigint':  return BigInt(s);
     case 'int':
@@ -349,7 +356,7 @@ function buildConnectionType(entityName: string, entityType: GraphQLObjectType):
 // Order matters: multi-char suffixes (starts_with) before their prefixes; `in` last.
 const KNOWN_OPS = ['not', 'gte', 'lte', 'gt', 'lt', 'contains', 'starts_with', 'ends_with', 'in'];
 
-function parseFilterKey(key: string): { field: string; op: string } {
+export function parseFilterKey(key: string): { field: string; op: string } {
   for (const op of KNOWN_OPS) {
     if (key.endsWith(`_${op}`)) {
       return { field: key.slice(0, key.length - op.length - 1), op };
@@ -373,7 +380,7 @@ function whereToFilters(where: Record<string, unknown>): StoreFilter[] {
 // Serialise a store record for GraphQL output
 // ---------------------------------------------------------------------------
 
-function serialiseRecord(
+export function serialiseRecord(
   record: Record<string, unknown>,
   def: EntityDef,
 ): Record<string, unknown> {
@@ -690,6 +697,7 @@ const GRAPHIQL_HTML = `<!DOCTYPE html>
 export function startGraphQLServer(
   gqlSchema: GraphQLSchema,
   options: ServeOptions = {},
+  readRouter?: ReadRouter,
 ): { server: Server; url: string } {
   const port = options.port ?? 4000;
   const path = options.path ?? '/graphql';
@@ -709,7 +717,7 @@ export function startGraphQLServer(
 
     // CORS headers — allow any origin for local dev
     res.setHeader('Access-Control-Allow-Origin',  '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
     if (req.method === 'OPTIONS') {
@@ -717,6 +725,20 @@ export function startGraphQLServer(
       res.end();
       return;
     }
+
+    // Serving-scale read path (REST / SQL-over-HTTP / SSE). Runs before the
+    // GraphQL route + 404; a true return means it owns this request.
+    if (readRouter) {
+      void readRouter(req, res, url).then((handled) => {
+        if (handled) return;
+        routeGraphql(req, res, url);
+      });
+      return;
+    }
+    routeGraphql(req, res, url);
+  });
+
+  function routeGraphql(req: IncomingMessage, res: ServerResponse, url: URL): void {
 
     // Health + metrics (operational endpoints).
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -823,7 +845,7 @@ export function startGraphQLServer(
 
     res.writeHead(405);
     res.end('Method not allowed');
-  });
+  }
 
   server.listen(port);
   return { server, url: `http://localhost:${port}${path}` };

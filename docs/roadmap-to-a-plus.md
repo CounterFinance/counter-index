@@ -261,6 +261,27 @@ regardless of how good everything else is.
 5. **M16, M17, M19** — relations, query power, migrations/deploy. Rounds out the product.
 6. **M20, M21, M15** — Solana, DX/CLI/docs, public benchmarks. The adoption + "many chains" story.
 
+## Post-A+ follow-ups (shipped)
+Beyond the M10–M22 bar, two adoption-facing extras landed:
+- **OHLCV candles · #56 · DONE** — `defineCandles` maintains incremental
+  open/high/low/close/volume/trades per time bucket (SQL-indexed `bucket`); the
+  DEX "give me 1m candles" path. See `src/candles.ts`, `dogfood/candles.ts`.
+- **Serving-scale read path · #57 · DONE** — three cache- and proxy-friendly read
+  surfaces on the same `store.query` SQL pushdown + keyset cursors as GraphQL,
+  on the one zero-dependency http server:
+  - **REST projection** — `GET /v1/:entity[/:id]`, cacheable (`Cache-Control:
+    public, s-maxage + stale-while-revalidate`) with ETag/`304` revalidation, so
+    hot reads sit behind a CDN edge (which GraphQL-over-POST forfeits).
+  - **SQL-over-HTTP** — `POST /sql`, a typed, allow-listed, parameterised query
+    (`{entity, where, orderBy, first, after, select}`) — the full filter object a
+    REST query-string can't express. No raw identifier interpolation.
+  - **Live queries (SSE)** — `GET /live?entity=…&<filters>`, a plain-HTTP
+    `text/event-stream` of matching store changes — proxies and load balancers
+    pass it through unchanged (no WebSocket upgrade).
+  Inherits the GraphQL endpoint's auth token + page cap; a bearer-gated REST
+  response is marked `private, no-store`. See `src/serving.ts`,
+  `tests/serving.test.ts`, `dogfood/serving.ts`.
+
 ## Tracked already
 - **M14/#18** HyperSync · **M13&M21/#34** perf + named handlers. New work above gets its own `gli` issues under the epic when started.
 

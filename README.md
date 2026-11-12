@@ -90,6 +90,7 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 | [Store](docs/store.md) | CRUD API — get, set, update, delete, list, find, onChange |
 | [Sources](docs/sources.md) | `DbEventSource`, `RpcEventSource`, `createEventSource`, Postgres |
 | [GraphQL](docs/graphql.md) | `serve()`, queries, cursor pagination, filters, subscriptions |
+| [Serving read path](docs/serving.md) | Cacheable REST + SQL-over-HTTP + SSE live queries |
 | [Decoders](docs/decoders.md) | Built-in OPNET decoders + `registerDecoder()` |
 | [Adding a chain](docs/adding-a-chain.md) | How to add a new chain adapter + checklist |
 | [Multichain roadmap](docs/multichain-roadmap.md) | Architecture, milestones, external references |
