@@ -93,18 +93,50 @@ function queryDepth(document: DocumentNode): number {
 }
 
 /** Render a flat/one-level-nested status map as Prometheus exposition text. */
+/** Health shape emitted by the indexer (see src/lifecycle.ts). */
+interface HealthLike {
+  state?: string;
+  uptimeMs?: number;
+  reorgs?: number;
+  errors?: number;
+  chains?: Array<{ chainId: number; lastBlock?: number; blocksBehind?: number | null; idleMs?: number }>;
+}
+const HEALTH_STATES = ['starting', 'backfilling', 'live', 'degraded', 'stalled', 'draining', 'stopped'];
+
 function renderMetrics(status: Record<string, unknown>): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(status)) {
-    if (typeof v === 'number') lines.push(`opindex_${k} ${v}`);
-    else if (typeof v === 'boolean') lines.push(`opindex_${k} ${v ? 1 : 0}`);
-    else if (v && typeof v === 'object') {
+    if (typeof v === 'number') { lines.push(`opindex_${k} ${v}`); continue; }
+    if (typeof v === 'boolean') { lines.push(`opindex_${k} ${v ? 1 : 0}`); continue; }
+    if (k === 'health' && v && typeof v === 'object') { renderHealth(v as HealthLike, lines); continue; }
+    if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('opindex_handler_latency_ms', v as HistogramLike, lines); continue; }
+    if (v && typeof v === 'object') {
       for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
         if (typeof v2 === 'number') lines.push(`opindex_${k}{key="${k2}"} ${v2}`);
       }
     }
   }
   return lines.join('\n') + '\n';
+}
+
+function renderHealth(h: HealthLike, lines: string[]): void {
+  // state as a one-hot gauge so Prometheus can alert on `== "stalled"`.
+  for (const s of HEALTH_STATES) lines.push(`opindex_health_state{state="${s}"} ${h.state === s ? 1 : 0}`);
+  if (typeof h.uptimeMs === 'number') lines.push(`opindex_uptime_ms ${h.uptimeMs}`);
+  if (typeof h.reorgs === 'number') lines.push(`opindex_reorgs_total ${h.reorgs}`);
+  if (typeof h.errors === 'number') lines.push(`opindex_errors_total ${h.errors}`);
+  for (const c of h.chains ?? []) {
+    if (typeof c.blocksBehind === 'number') lines.push(`opindex_chain_blocks_behind{chain="${c.chainId}"} ${c.blocksBehind}`);
+    if (typeof c.lastBlock === 'number') lines.push(`opindex_chain_last_block{chain="${c.chainId}"} ${c.lastBlock}`);
+    if (typeof c.idleMs === 'number') lines.push(`opindex_chain_idle_ms{chain="${c.chainId}"} ${c.idleMs}`);
+  }
+}
+
+interface HistogramLike { buckets?: Array<{ le: number | '+Inf'; count: number }>; count?: number; sum?: number }
+function renderHistogram(name: string, h: HistogramLike, lines: string[]): void {
+  for (const b of h.buckets ?? []) lines.push(`${name}_bucket{le="${b.le}"} ${b.count}`);
+  if (typeof h.count === 'number') lines.push(`${name}_count ${h.count}`);
+  if (typeof h.sum === 'number') lines.push(`${name}_sum ${h.sum}`);
 }
 
 export interface ServeHandle {
@@ -677,8 +709,13 @@ export function startGraphQLServer(
     // Health + metrics (operational endpoints).
     if (req.method === 'GET' && url.pathname === '/health') {
       const s = options.status?.() ?? {};
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', ...s }));
+      const state = (s['health'] as { state?: string } | undefined)?.state;
+      // Report NOT-ready (503) when the indexer can't make progress, so a load
+      // balancer / k8s readiness probe drains it. `degraded` stays 200 (it is
+      // still progressing). No health info at all ⇒ assume ok (back-compat).
+      const unhealthy = state === 'stalled' || state === 'stopped' || state === 'draining';
+      res.writeHead(unhealthy ? 503 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: state ?? 'ok', ...s }));
       return;
     }
     if (req.method === 'GET' && url.pathname === '/metrics') {
@@ -717,14 +754,30 @@ export function startGraphQLServer(
 
       let body = '';
       let tooLarge = false;
+      let responded = false;
+      const reply = (code: number, payload: unknown): void => {
+        if (responded) return;
+        responded = true;
+        json(res, code, payload);
+      };
+      // A client that aborts or resets mid-upload emits 'error' on the request/
+      // socket; without a listener Node escalates it to an uncaughtException that
+      // would take the whole server down — exactly the DoS this endpoint guards
+      // against. Swallow it: the request is already over.
+      req.on('error', () => { /* client aborted — ignore */ });
+      res.on('error', () => { /* broken pipe — ignore */ });
       req.on('data', (chunk: Buffer) => {
-        if (tooLarge) return;                                             // stop buffering past the cap
+        if (tooLarge) return;                                             // already over the cap — drain & discard
         body += chunk.toString();
-        if (body.length > MAX_BODY) { tooLarge = true; body = ''; }       // body-size DoS guard; respond 413 on end
+        if (body.length > MAX_BODY) {
+          tooLarge = true; body = '';
+          reply(413, { errors: [{ message: 'request body too large' }] }); // respond at once
+          req.resume();                                                    // drain the rest cleanly (no reset)
+        }
       });
       req.on('end', () => {
+        if (tooLarge || responded) return;
         void (async () => {
-          if (tooLarge) { json(res, 413, { errors: [{ message: 'request body too large' }] }); return; }
           try {
             const { query, variables, operationName } = JSON.parse(body) as {
               query: string;
@@ -735,10 +788,11 @@ export function startGraphQLServer(
             try {
               const depth = queryDepth(parse(query));
               if (depth > maxDepth) {
-                json(res, 400, { errors: [{ message: `query depth ${depth} exceeds max ${maxDepth}` }] });
+                reply(400, { errors: [{ message: `query depth ${depth} exceeds max ${maxDepth}` }] });
                 return;
               }
             } catch { /* parse error — let graphql() produce the proper error below */ }
+            if (responded) return;
 
             const result = await graphql({
               schema:         gqlSchema,
@@ -746,9 +800,9 @@ export function startGraphQLServer(
               variableValues: variables,
               operationName,
             });
-            json(res, 200, result);
+            reply(200, result);
           } catch (e) {
-            json(res, 400, { errors: [{ message: String(e) }] });
+            reply(400, { errors: [{ message: String(e) }] });
           }
         })();
       });

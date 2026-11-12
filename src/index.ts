@@ -16,6 +16,14 @@ export { createIndexer, type Indexer, type IndexerConfig, type IndexerStats, typ
 export { createMultiIndexer, type MultiIndexer, type MultiIndexerConfig, type MultiSource } from './multiIndexer.js';
 export { type IndexerLogger, createLogger, noopLogger, type LoggerOptions, type LogLevel } from './logger.js';
 
+// --- Operability (health, metrics, tracing, retry) — M18 -------------------
+
+export {
+  Lifecycle, Histogram, noopTracer, jsonTracer, withRetry,
+  type HealthState, type HealthReport, type ChainHealth, type LifecycleOptions,
+  type Tracer, type Span, type RetryOptions,
+} from './lifecycle.js';
+
 // --- DB adapter ------------------------------------------------------------
 
 export {

@@ -41,7 +41,8 @@
     "dogfood:atomicity": "tsx dogfood/atomicity.ts",
     "test:pg": "bash scripts/pg-test.sh",
     "mutation": "stryker run",
-    "bench:batch": "tsx dogfood/bench-batch.ts"
+    "bench:batch": "tsx dogfood/bench-batch.ts",
+    "dogfood:ops": "tsx dogfood/ops.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
