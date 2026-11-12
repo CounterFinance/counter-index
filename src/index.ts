@@ -14,7 +14,7 @@ export { type EntityStore, type StoreChangeEvent, type TypedStore, type RowOf, t
 export { HandlerRegistry, type HandlerContext, type EventHandler, type BlockContext, type BlockHandler } from './handler.js';
 export { createIndexer, type Indexer, type IndexerConfig, type IndexerStats, type ServeOptions, type ServeHandle } from './indexer.js';
 export { createMultiIndexer, type MultiIndexer, type MultiIndexerConfig, type MultiSource } from './multiIndexer.js';
-export { type IndexerLogger } from './logger.js';
+export { type IndexerLogger, createLogger, noopLogger, type LoggerOptions, type LogLevel } from './logger.js';
 
 // --- DB adapter ------------------------------------------------------------
 
