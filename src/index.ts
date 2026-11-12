@@ -20,6 +20,10 @@ export { type IndexerLogger, createLogger, noopLogger, type LoggerOptions, type 
 
 export { loadConfig, ConfigError, type ConfigSchema, type ConfigField, type ConfigFieldType, type ConfigOf } from './config.js';
 
+// --- OHLCV candles (time-series helper) ------------------------------------
+
+export { defineCandles, candleEntity, candleBucket, type DefineCandlesOptions } from './candles.js';
+
 // --- Operability (health, metrics, tracing, retry) — M18 -------------------
 
 export {
