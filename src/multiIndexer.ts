@@ -36,6 +36,13 @@ export interface MultiSource {
   toBlock?: number;
   /** Optional per-source event filter. */
   filters?: EventSourceFilters;
+  /**
+   * Optional dedicated DB connection for this chain. Provide one per source
+   * (e.g. separate connections from a Postgres pool to the SAME database) to let
+   * `syncAll()` backfill chains **in parallel** — a single shared connection
+   * can't run concurrent transactions, so without this they run sequentially.
+   */
+  sink?: MinimalDbAdapter;
 }
 
 export interface MultiIndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
@@ -75,10 +82,13 @@ export async function createMultiIndexer<S extends SchemaDefinition>(
   const entries: Array<{ chainId: number; indexer: Indexer<S>; spec: MultiSource }> = [];
   for (const spec of config.sources) {
     const indexer = await createIndexer({
-      schema: config.schema, sink: config.sink, source: spec.source, logger: config.logger,
+      schema: config.schema, sink: spec.sink ?? config.sink, source: spec.source, logger: config.logger,
     });
     entries.push({ chainId: spec.chainId, indexer, spec });
   }
+  // Parallel backfill is safe only when every chain has its OWN connection —
+  // otherwise concurrent transactions would collide on the shared connection.
+  const canParallelize = config.sources.length > 1 && config.sources.every((s) => s.sink !== undefined);
 
   const first = entries[0];
   if (!first) throw new Error('[op-index] createMultiIndexer needs at least one source.');
@@ -97,14 +107,18 @@ export async function createMultiIndexer<S extends SchemaDefinition>(
       return entries.map((e) => ({ chainId: e.chainId, indexer: e.indexer }));
     },
     async syncAll() {
-      // Sequential: the indexers share one sink connection, and a SQLite
-      // connection cannot run two transactions at once. For true parallel
-      // backfill, give each chain its own connection (e.g. a Postgres pool).
-      const results: IndexerStats[] = [];
-      for (const { indexer, spec } of entries) {
+      const one = ({ indexer, spec }: typeof entries[number]): Promise<IndexerStats> => {
         const to = spec.toBlock ?? spec.fromBlock;
-        results.push(await indexer.sync(spec.fromBlock, to, spec.filters, to));
+        return indexer.sync(spec.fromBlock, to, spec.filters, to);
+      };
+      if (canParallelize) {
+        // Each chain has its own connection → backfill all chains concurrently.
+        return Promise.all(entries.map(one));
       }
+      // Shared connection: a SQLite connection can't run two transactions at
+      // once, so run sequentially. Give each source its own `sink` to parallelize.
+      const results: IndexerStats[] = [];
+      for (const e of entries) results.push(await one(e));
       return results;
     },
     subscribeAll(options) {

@@ -84,13 +84,17 @@ Was one SQL round-trip per `store.set`.
 *Why:* batching is what makes Postgres-over-network viable — each avoided
 round-trip is a full RTT.
 
-### M14 — Backfill speed · P1 · ~3–4 days  _(includes #18)_
-- [ ] **HyperSync source** (`@envio-dev/hypersync-client`) as the fast EVM
-      backfill path, with `EvmLogSource` as the fallback (token in NEEDS_YOU).
-- [ ] **Ordered-parallel chunk fetching** (currently concurrency = 1).
-- [ ] **Postgres `sql.cursor()` streaming** for very large ranges.
-- [ ] **Per-chain connections** so `createMultiIndexer.syncAll()` runs chains in
-      **parallel** (today it's sequential — one shared SQLite connection).
+### M14 — Backfill speed · P1 · **DONE** (opidx-#50; HyperSync stays #18)
+- [x] **Ordered-parallel chunk fetching** (`EvmLogSource.concurrency`): N
+      `eth_getLogs` in flight, yielded in block order. 240 ms → 40 ms at
+      concurrency 6 in the test harness; live anvil backfill still exact.
+- [x] **Per-chain connections** → `createMultiIndexer.syncAll()` runs chains in
+      **parallel** when each `MultiSource` has its own `sink` (shared connection
+      stays sequential — SQLite can't run concurrent txns). ~2×D → ~1×D for 2 chains.
+- [ ] **HyperSync source** (`@envio-dev/hypersync-client`): needs a network
+      endpoint + token, so it stays gated behind **opidx-#18** (not bundled).
+- [ ] **Postgres `sql.cursor()` streaming** for very large ranges — deferred;
+      `store.query` already bounds result sets with LIMIT, so the OOM risk is gone.
 *Why:* backfill time is the first thing a user measures.
 
 ### M15 — Benchmarked & proven · P1 · ~1–2 days  _(extends docs/benchmarks.md)_

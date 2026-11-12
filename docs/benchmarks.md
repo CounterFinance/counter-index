@@ -85,6 +85,27 @@ The bench asserts the pushdown page is identical to the whole-table page. Notes:
   concurrent writes, and a past-the-end cursor returns empty (the old code wrongly
   returned page 1). Field/order names are schema-validated, never interpolated.
 
+## Backfill parallelism (M14)
+
+Backfill is latency-bound: `eth_getLogs` round-trips dominate, so the core is idle
+waiting on the network. Two levers, both measured in the test suite (offline, with
+injected RPC delay — not external numbers):
+
+- **Ordered-parallel chunk fetching** (`EvmLogSource` `concurrency`): fetch N
+  `eth_getLogs` chunks in flight, yield them strictly in block order. With a 20 ms
+  injected delay over 12 one-block chunks, `concurrency: 1` ≈ 240 ms vs
+  `concurrency: 6` ≈ 40 ms — same events, same ascending order
+  (`tests/evmLogSource.test.ts`). Default is 1 (sequential); set 4–8 for backfill.
+- **Parallel per-chain `syncAll`** (`createMultiIndexer`): give each `MultiSource`
+  its own `sink` connection (e.g. separate Postgres-pool connections to one DB) and
+  `syncAll()` backfills chains concurrently instead of one-after-another — ~2×D
+  drops to ~1×D for two chains (`tests/multiIndexer.test.ts`). With a single shared
+  connection it stays sequential (a SQLite connection can't run concurrent txns).
+
+Still a documented follow-up (opidx-#18): the **HyperSync** source as the fast EVM
+backfill path — it needs a network endpoint + token, so it's gated behind that, not
+bundled here.
+
 ## Cross-tool comparison
 
 For apples-to-apples numbers against The Graph, Ponder, Subsquid, rindexer and

@@ -141,6 +141,42 @@ describe('EvmLogSource.queryStream', () => {
     expect(got.length).toBe(countAfterStop);       // no further polls after stop()
   });
 
+  it('ordered-parallel: fetches chunks concurrently but yields blocks in order', async () => {
+    // A client where each eth_getLogs takes ~20ms and returns one log at its block.
+    let inFlight = 0, maxInFlight = 0;
+    const request = vi.fn(async ({ method, params }: { method: string; params?: unknown[] }) => {
+      if (method === 'eth_chainId') return '0x1';
+      if (method === 'eth_getLogs') {
+        inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 20));
+        inFlight--;
+        const p = (params as [{ fromBlock: string; toBlock: string }])[0];
+        const bn = Number(BigInt(p.fromBlock));
+        return [rawLog(bn, 0, `0xtx${bn}`, A, B, BigInt(bn))];
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    const client = createPublicClient({ transport: custom({ request }) });
+
+    const seq = new EvmLogSource({ chainId: 1, network: 'eth', abi: erc20Abi as unknown as Abi, client, maxBlockRange: 1, fetchBlockTimestamps: false, concurrency: 1 });
+    const par = new EvmLogSource({ chainId: 1, network: 'eth', abi: erc20Abi as unknown as Abi, client, maxBlockRange: 1, fetchBlockTimestamps: false, concurrency: 6 });
+
+    const t0 = Date.now();
+    const seqEvents = await collect(seq.queryStream(1, 12));   // 12 chunks, serial ≈ 240ms
+    const seqMs = Date.now() - t0;
+
+    maxInFlight = 0;
+    const t1 = Date.now();
+    const parEvents = await collect(par.queryStream(1, 12));   // 12 chunks, ~6-wide ≈ 40ms
+    const parMs = Date.now() - t1;
+
+    // Same events, strictly ascending block order, on both paths.
+    expect(parEvents.map((e) => e.blockNumber)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(parEvents.map((e) => e.blockNumber)).toEqual(seqEvents.map((e) => e.blockNumber));
+    expect(maxInFlight).toBeGreaterThan(1);                    // actually ran concurrently
+    expect(parMs).toBeLessThan(seqMs);                         // and it was faster
+  });
+
   it('groups sibling logs per tx into txEvents', async () => {
     const { client } = mockClient();
     const source = new EvmLogSource({ chainId: 1, network: 'eth', abi: erc20Abi as unknown as Abi, client });
