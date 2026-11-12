@@ -66,6 +66,23 @@ export {
   type EvmChainMeta,
 } from './chains/evm/index.js';
 
+// --- Solana adapter (dependency-free: Anchor discriminator + Borsh) ---------
+export {
+  SolanaDecoder,
+  anchorEventDiscriminator,
+  SolanaLogSource,
+  programDataPayloads,
+  BorshReader,
+  BorshWriter,
+  base58Encode,
+  type SolanaEventDef,
+  type SolanaEventField,
+  type SolanaLogSourceOptions,
+  type SolanaTx,
+  type SolanaChainMeta,
+  type SolType,
+} from './chains/solana/index.js';
+
 // --- OPNET adapter ---------------------------------------------------------
 // Re-exported at the top level for convenience; the canonical path is
 // '@opnet-collective/op-index/chains/opnet'.

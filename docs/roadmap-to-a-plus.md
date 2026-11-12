@@ -189,11 +189,16 @@ round-trip is a full RTT.
 
 ## Phase E — Chains, DX & ecosystem (adoption)
 
-### M20 — A third chain + the fast path · P1 · ~1 week
-- [ ] **Solana adapter** (instruction/discriminator decoding + a Solana source).
-      Two adapters prove the thesis; three prove "many," and Solana is the
-      highest-demand non-EVM chain.
-- [ ] Wire **HyperSync** as the EVM default once M14 lands.
+### M20 — A third chain + the fast path · P1 · **DONE** (opidx-#55)
+- [x] **Solana adapter** — a third chain (non-EVM, non-OPNET) through the
+      chain-neutral core, dependency-free: Anchor-style event decoding
+      (8-byte `sha256("event:"+Name)` discriminator + minimal **Borsh** codec +
+      base58 pubkeys), a `SolanaChainMeta`, and a `SolanaLogSource` that turns
+      `Program data:` logs into `ChainEvent`s over an injectable fetcher (RPC/
+      Geyser/fixture). Indexed through the SAME `createIndexer` + store + GraphQL
+      as EVM/OPNET (`npm run dogfood:solana`). Three adapters ⇒ "many" is true.
+- [ ] Wire **HyperSync** as the EVM default — stays **opidx-#18** (network +
+      token-gated; the token/auth + rate-limit handling is tracked there).
 *Why:* "many chains" should be true, and Solana is where the demand is.
 
 ### M21 — DX & release engineering · P1 · **DONE** (opidx-#54)
