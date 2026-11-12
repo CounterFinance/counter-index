@@ -61,17 +61,22 @@ Reorg handling exists and is live-verified, but only for the common cases.
 
 ## Phase B — Performance (an A+ indexer is *fast*)
 
-### M13 — Write throughput · P0 · ~2 days  _(partly #34)_
-Today it's one SQL round-trip per `store.set`.
-- [ ] **Bulk per-block buffered writes**: accumulate a block's writes, flush as
-      one multi-row `INSERT … ON CONFLICT` per table at `commitBlock` (3–10× on
-      write-bound backfill). Buffer must be **read-your-writes** (a `get` in the
-      same block sees pending writes).
-- [ ] **Secondary indexes from the schema**: `{ type, index: true }` →
-      `CREATE INDEX`. Right now `orderBy block` / `where token` scan.
-- [ ] Prepared-statement reuse / caching on the hot path.
-*Why:* the current ~192k ev/s is in-memory SQLite with trivial writes; batching
-is what makes Postgres-over-network viable.
+### M13 — Write throughput · P0 · **DONE** (opidx-#46)
+Was one SQL round-trip per `store.set`.
+- [x] **Bulk per-block buffered writes**: `beginBatch`/`flushBatch` bracket each
+      block's writes inside `commitBlock`'s transaction and flush as chunked
+      multi-row `INSERT … ON CONFLICT` per table. **Read-your-writes** — `get`
+      reads the buffer first, so the balance pattern works mid-block. Bench:
+      **6000 → 2 write round-trips** for a 2000-transfer block (`npm run bench:batch`),
+      batched final state ≡ unbatched, crash dogfood still green.
+- [x] **Secondary indexes from the schema**: `{ type, index: true }` →
+      `CREATE INDEX`; multichain auto-indexes `chainId`. (Query paths start
+      *using* them at M17 SQL pushdown — until then every read still scans; this
+      milestone lays the index + the batched write path.)
+- [ ] Prepared-statement reuse / caching on the hot path — deferred; the
+      round-trip count, not statement prep, dominated (see bench). Tracked under #34.
+*Why:* batching is what makes Postgres-over-network viable — each avoided
+round-trip is a full RTT.
 
 ### M14 — Backfill speed · P1 · ~3–4 days  _(includes #18)_
 - [ ] **HyperSync source** (`@envio-dev/hypersync-client`) as the fast EVM

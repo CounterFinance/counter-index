@@ -23,6 +23,8 @@ export type FieldType = 'string' | 'int' | 'float' | 'bigint' | 'boolean' | 'byt
 export interface FieldDef {
   type: FieldType;
   optional?: boolean;
+  /** Create a secondary index on this column (speeds up where/orderBy on it). */
+  index?: boolean;
 }
 
 // ---------------------------------------------------------------------------

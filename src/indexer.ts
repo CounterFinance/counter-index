@@ -292,8 +292,14 @@ export async function createIndexer<S extends SchemaDefinition>(
     stats.blocksProcessed++;
     const t0 = Date.now();
     await config.sink.transaction(async () => {
+      // Buffer every entity write for the block, then commit them as batched
+      // multi-row upserts (M13) — all inside this one transaction, so atomicity
+      // and exactly-once (M10) are unchanged. A thrown block rolls back here and
+      // the next beginBatch() resets the buffer.
+      store.beginBatch();
       for (const event of events) await dispatch(event);
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
+      await store.flushBatch();
       if (reorgEnabled && currentBlockHash) {
         await store.recordBlockHash(currentChainId, blockNumber, currentBlockHash);
       }
