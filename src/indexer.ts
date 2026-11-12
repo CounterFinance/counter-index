@@ -530,6 +530,7 @@ export async function createIndexer<S extends SchemaDefinition>(
     async serve(options) {
       const gqlSchema = buildGraphQLSchema(config.schema, store, {
         subscriptions: options?.subscriptions,
+        maxPageSize: options?.maxPageSize,
       });
       // Default /health + /metrics expose the live indexer stats.
       const serveOptions = { ...options, status: options?.status ?? ((): Record<string, unknown> => ({ ...stats })) };
