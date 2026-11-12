@@ -32,6 +32,12 @@ export interface EvmLogSourceOptions {
   maxBlockRange?: number;
   /** Poll interval for live mode (ms). Default 12000. */
   pollIntervalMs?: number;
+  /**
+   * Fetch each block's timestamp (one getBlock per block that has logs, cached)
+   * so ChainEvent.blockTimestamp is populated for time-series handlers. Default
+   * true. Set false to skip the extra round-trips when you don't need block time.
+   */
+  fetchBlockTimestamps?: boolean;
 }
 
 const hexToBytes = (hex: string): Uint8Array =>
@@ -46,6 +52,9 @@ export class EvmLogSource implements EventSource, DynamicSource {
   private readonly addressSet: Set<string>;
   private readonly maxBlockRange: number;
   private readonly defaultPollMs: number;
+  private readonly fetchTs: boolean;
+  /** blockNumber -> unix timestamp, cached across chunks. */
+  private readonly tsCache = new Map<number, number>();
 
   constructor(options: EvmLogSourceOptions) {
     if (!options.client && !options.rpcUrl) {
@@ -58,6 +67,22 @@ export class EvmLogSource implements EventSource, DynamicSource {
     this.addressSet = new Set((options.addresses ?? []).map((a) => a.toLowerCase()));
     this.maxBlockRange = options.maxBlockRange ?? 2000;
     this.defaultPollMs = options.pollIntervalMs ?? 12_000;
+    this.fetchTs = options.fetchBlockTimestamps ?? true;
+  }
+
+  /** Fetch + cache timestamps for the blocks that have logs in this batch. */
+  private async loadTimestamps(logs: Log[]): Promise<void> {
+    const want = new Set<number>();
+    for (const l of logs) {
+      const bn = Number(l.blockNumber ?? 0n);
+      if (!this.tsCache.has(bn)) want.add(bn);
+    }
+    for (const bn of want) {
+      try {
+        const block = await this.client.getBlock({ blockNumber: BigInt(bn), includeTransactions: false });
+        this.tsCache.set(bn, Number(block.timestamp));
+      } catch { /* leave undefined — timestamp is best-effort */ }
+    }
   }
 
   async *queryStream(
@@ -76,6 +101,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
       });
       const ordered = [...logs].sort(compareLogs);
       const txEventsByTx = buildTxEventsMap(ordered, this.decoder);
+      if (this.fetchTs) await this.loadTimestamps(ordered);
 
       for (const log of ordered) {
         const event = this.toChainEvent(log, txEventsByTx);
@@ -145,6 +171,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
       network:         this.network,
       blockNumber:     Number(log.blockNumber ?? 0n),
       blockHash:       log.blockHash ?? '',
+      blockTimestamp:  this.tsCache.get(Number(log.blockNumber ?? 0n)),
       txHash:          log.transactionHash ?? '',
       txIndex:         log.transactionIndex ?? undefined,
       logIndex:        log.logIndex ?? undefined,

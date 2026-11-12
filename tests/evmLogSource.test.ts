@@ -60,6 +60,17 @@ function mockClient(onGetLogs?: (p: { fromBlock: string; toBlock: string }) => v
         return bn >= from && bn <= to;
       });
     }
+    if (method === 'eth_getBlockByNumber') {
+      const bn = Number(BigInt((params as [string])[0]));
+      const z = (n: number): string => '0x' + '0'.repeat(n);
+      return {
+        number: numberToHex(bn), hash: '0x' + bn.toString(16).padStart(64, '0'), parentHash: z(64),
+        nonce: z(16), sha3Uncles: z(64), logsBloom: z(512), transactionsRoot: z(64), stateRoot: z(64),
+        receiptsRoot: z(64), miner: z(40), difficulty: '0x0', totalDifficulty: '0x0', extraData: '0x',
+        size: '0x0', gasLimit: '0x0', gasUsed: '0x0', timestamp: numberToHex(1_700_000_000 + bn),
+        transactions: [], uncles: [], baseFeePerGas: '0x0',
+      };
+    }
     throw new Error(`unexpected method ${method}`);
   });
   return { client: createPublicClient({ transport: custom({ request }) }), request };
@@ -86,6 +97,7 @@ describe('EvmLogSource.queryStream', () => {
     expect(e0!.blockNumber).toBe(100);
     expect(e0!.blockHash).toBe('0xblock100');
     expect(e0!.txHash).toBe('0xtxA');
+    expect(e0!.blockTimestamp).toBe(1_700_000_100);   // fetched per-block via getBlock
     expect((e0!.decoded!['value'])).toBe(100n);
     expect((e0!.chainMeta as EvmChainMeta).kind).toBe('evm');
     expect((e0!.chainMeta as EvmChainMeta).topics[0]).toBe(TOPIC0);
