@@ -58,3 +58,42 @@ seeing a reorg at all.
    4–5, assert final state equals a from-scratch index of the canonical 1–5.
 2. **Live:** on anvil, snapshot, index, mine a divergent branch (revert +
    re-mine), drive fork detection, assert state equals a fresh re-index.
+
+## Hardening (M11)
+
+The M6 core was correct for shallow live reorgs; M11 makes the failure modes safe.
+
+- **Atomic rollback.** `rollbackToBlock` now runs the journal replay, the
+  journal/block-hash cleanup **and the checkpoint rewind** in ONE transaction. A
+  crash mid-rollback rolls the whole thing back; on restart the journal is intact
+  and the rollback simply re-runs. State can never half-rewind, and the checkpoint
+  can never diverge from the data (it's rewound in the same txn, not by the caller).
+  Proven by a fault-injection test (`tests/reorg-hardening.test.ts`): a failure
+  mid-rollback leaves the pre-rollback state fully intact, and a retry succeeds.
+
+- **Deep-reorg detection — stop, don't diverge.** Two guards:
+  1. *Store level:* `rollbackToBlock` throws **`DeepReorgError`** if the target is
+     below the retained finality floor (its journal was pruned) — a correct
+     rollback is impossible, so it refuses rather than silently producing wrong data.
+  2. *Live level:* after clamping the rollback to `tip - finalityDepth`, the indexer
+     checks that the canonical chain's first re-indexed block builds on the
+     **retained hash** of that boundary. If it doesn't, the true fork is older than
+     `finalityDepth`; the indexer logs, **halts the subscription**, flips to an
+     error state, and calls the optional `onDeepReorg` hook. It never re-indexes
+     over a fork it can't prove it resolved. (To make the boundary hash available,
+     pruning retains `finalityDepth + 1` blocks.)
+  Both paths are tested, including an indexer-level deep-reorg that halts instead
+  of diverging (`tests/reorgIndexer.test.ts`).
+
+- **Property test (already in M12):** `tests/property.reorg.test.ts` — apply-then-
+  undo over 150 random journals equals the pre-fork state (rollback == inverse).
+
+### Still honest about scope
+- **Backfill reorgs:** historical `sync()` runs below finality where blocks are
+  final; a reorg near the tip is caught by the live `subscribe` fork detection at
+  the backfill→live handoff, not during the backfill scan itself.
+- **Empty-block residual:** the live boundary check needs the canonical boundary
+  block to carry events (for its `parentHash`). A deep fork whose boundary block is
+  empty is still caught by the store-level floor guard on the next rollback that
+  needs pruned journal, but not at the boundary itself — choose `finalityDepth`
+  ≥ the chain's realistic max reorg depth.
