@@ -36,7 +36,8 @@
     "example:evm": "tsx examples/evm-portfolio/demo.ts",
     "dogfood:reorg": "tsx dogfood/evm-reorg.ts",
     "bench": "tsx dogfood/bench.ts",
-    "coverage": "vitest run --coverage"
+    "coverage": "vitest run --coverage",
+    "dogfood:mainnet": "tsx dogfood/evm-mainnet.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
