@@ -203,6 +203,15 @@ round-trip is a full RTT.
       token-gated; the token/auth + rate-limit handling is tracked there).
 *Why:* "many chains" should be true, and Solana is where the demand is.
 
+> **Honest limitation:** the Solana adapter is proven on **synthetic Anchor
+> fixtures** (decoder round-trips against known-good vectors + an end-to-end
+> indexed dogfood), *not yet* against a live validator — EVM has both live-anvil
+> and live-mainnet proofs. A live-Solana proof needs the Solana CLI + Anchor +
+> `solana-test-validator` (a heavy Rust/validator toolchain, absent in this
+> environment); it stays a tracked follow-up, not a silent gap. The decoding path
+> (discriminator + Borsh + base58) is the part most worth proving, and it is the
+> part the fixtures exercise directly.
+
 ### M21 — DX & release engineering · P1 · **DONE** (opidx-#54)
 - [x] **CLI** `op-index init` scaffolds a runnable project (tested; fixed a real
       bug — it scaffolded the wrong package name, so the dep wouldn't resolve).
