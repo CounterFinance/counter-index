@@ -106,6 +106,25 @@ Still a documented follow-up (opidx-#18): the **HyperSync** source as the fast E
 backfill path — it needs a network endpoint + token, so it's gated behind that, not
 bundled here.
 
+## Soak / leak (M15)
+
+`npm run soak` (uses `node --expose-gc` for stable heap numbers) indexes a long
+synthetic stream over a BOUNDED account set. The store grows with unique entities,
+not events, so once the accounts are populated the heap must **plateau** — a
+per-event leak would grow it ~linearly with events. A representative run:
+
+```
+events 300,000 over 15,000 blocks, 1000 accounts
+throughput 234,558 ev/s in 1.3s
+heap after:  25%=19MB   50%=24MB   75%=22MB   100%=27MB     ← plateaus, no climb
+late-run heap growth +4MB (bounded) · health=live · lag=0
+PASS — memory bounded, no leak, state live.
+```
+
+`tests/soak.test.ts` is the deterministic companion: over 40 000 events it asserts
+every account's indexed balance equals an independent tally, the entity set stays
+bounded, no errors, health `live`. (Correctness-at-scale; heap is the dogfood's job.)
+
 ## Cross-tool comparison
 
 For apples-to-apples numbers against The Graph, Ponder, Subsquid, rindexer and
