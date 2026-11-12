@@ -112,13 +112,18 @@ round-trip is a full RTT.
 
 ## Phase C — Data model & query power
 
-### M16 — Rich schema · P1 · ~3 days
-- [ ] **Entity relationships / references** between entities with **nested
-      GraphQL resolution** (e.g. `Swap.pool { … }`). Today entities are flat.
-- [ ] **`index` + `unique`** field constraints in `defineSchema`.
-- [ ] **Typed `event.decoded`**: infer the decoded payload type from the
-      registered decoder/ABI so handlers aren't casting `as string`.
-- [ ] Derived/computed fields.
+### M16 — Rich schema · P1 · **DONE** (opidx-#52)
+- [x] **Entity relationships** with **nested GraphQL resolution**:
+      `{ type: 'string', ref: 'Pool' }` → `swap.pool { token0 }` resolved on
+      demand (scoped per chain), dangling refs → null, filter by the ref id.
+      Built via lazy field thunks so entities can reference one another.
+- [x] **`index` + `unique`** constraints in `defineSchema` (`unique` → a real
+      UNIQUE index that **rejects** duplicates — the upsert now conflicts on the
+      PK only, on both dialects, so a secondary unique violation raises instead of
+      silently replacing). Verified on SQLite + real Postgres.
+- [ ] **Typed `event.decoded`** (infer payload type from the ABI) — deferred: a
+      pure compile-time ergonomics win over a dynamic decoder; no runtime risk.
+- [ ] Derived/computed fields — deferred (expressible today in handlers/`onBlock`).
 *Why:* real apps (DEX, lending) need relations and typed payloads.
 
 ### M17 — Query power + API safety · P0 · **DONE** (opidx-#48, closes bug #42)

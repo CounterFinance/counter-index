@@ -44,7 +44,8 @@
     "bench:batch": "tsx dogfood/bench-batch.ts",
     "dogfood:ops": "tsx dogfood/ops.ts",
     "bench:query": "tsx dogfood/bench-query.ts",
-    "soak": "node --expose-gc ./node_modules/.bin/tsx dogfood/soak.ts"
+    "soak": "node --expose-gc ./node_modules/.bin/tsx dogfood/soak.ts",
+    "dogfood:relationships": "tsx dogfood/relationships.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
