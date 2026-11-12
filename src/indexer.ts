@@ -40,6 +40,12 @@ export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   source?: EventSource;
   /** Optional logger. Defaults to a no-op logger. */
   logger?: IndexerLogger;
+  /**
+   * Enable reorg handling (prior-row journal + fork detection). Off by default.
+   * `finalityDepth` is how many recent blocks stay rollback-able per chain.
+   * See docs/reorg-design.md.
+   */
+  reorg?: { finalityDepth: number };
 }
 
 export interface IndexerStats {
@@ -105,6 +111,13 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
   resetStats(): void;
 
   /**
+   * Roll entity state for a chain back to the end of `blockNumber` and rewind the
+   * checkpoint, using the reorg journal. Requires `reorg` to have been enabled.
+   * Re-run sync()/subscribe() from `blockNumber + 1` to rebuild the canonical chain.
+   */
+  rollbackTo(blockNumber: number, chainId?: number): Promise<void>;
+
+  /**
    * Start a GraphQL HTTP server that exposes all indexed entities.
    *
    * - GET  /graphql → GraphiQL playground
@@ -148,6 +161,10 @@ export async function createIndexer<S extends SchemaDefinition>(
   // Chain of the block currently being processed — stamped by dispatch(), read
   // by dispatchBlock() for per-chain block context + checkpoint (multichain).
   let currentChainId = 0;
+  let currentBlockHash = '';
+  const reorgEnabled = !!config.reorg;
+  const finalityDepth = config.reorg?.finalityDepth ?? 0;
+  if (reorgEnabled) store.enableReorg(finalityDepth);
 
   const scopedStore = (chainId: number): TypedStore<S> =>
     multichain ? (scopeStoreToChain(store, chainId) as unknown as TypedStore<S>) : typedStore;
@@ -166,6 +183,8 @@ export async function createIndexer<S extends SchemaDefinition>(
 
   async function dispatch(event: ChainEvent): Promise<void> {
     currentChainId = event.chainId;
+    currentBlockHash = event.blockHash;
+    if (reorgEnabled) store.setReorgContext(event.blockNumber, event.chainId);
     stats.eventsProcessed++;
     if (event.blockNumber > stats.lastBlock) {
       stats.lastBlock = event.blockNumber;
@@ -207,8 +226,14 @@ export async function createIndexer<S extends SchemaDefinition>(
     const t0 = Date.now();
     await config.sink.transaction(async () => {
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
+      if (reorgEnabled && currentBlockHash) {
+        await store.recordBlockHash(currentChainId, blockNumber, currentBlockHash);
+      }
       await store.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, multichain ? currentChainId : undefined);
     });
+    if (reorgEnabled && finalityDepth > 0 && blockNumber - finalityDepth > 0) {
+      await store.pruneReorgData(currentChainId, blockNumber - finalityDepth);
+    }
     return Date.now() - t0;
   }
 
@@ -374,6 +399,29 @@ export async function createIndexer<S extends SchemaDefinition>(
             });
             eventsInBlock = 0;
           }
+
+          // Fork detection: a new block whose parentHash disagrees with the hash
+          // we stored for block-1 means our recent chain is orphaned. Roll back a
+          // finality window and re-index the canonical blocks before this one.
+          if (reorgEnabled && event.parentHash && event.blockNumber !== lastBlock) {
+            const prevStored = await store.getBlockHash(event.chainId, event.blockNumber - 1);
+            if (prevStored !== undefined && prevStored !== event.parentHash) {
+              const safe = Math.max(fromBlock - 1, event.blockNumber - 1 - finalityDepth);
+              log.info('indexer', 'reorg detected', {
+                chain: event.chainId, block: event.blockNumber, rollback_to: safe,
+                expected_parent: prevStored, got_parent: event.parentHash,
+              });
+              await store.rollbackToBlock(safe, event.chainId);
+              await store.writeBlockCheckpoint(safe, undefined, undefined, multichain ? event.chainId : undefined);
+              let cb = -1; let ct: number | undefined;
+              for await (const e of source.queryStream(safe + 1, event.blockNumber - 1, options?.filters)) {
+                if (cb !== -1 && e.blockNumber !== cb) await dispatchBlock(cb, ct, cb);
+                cb = e.blockNumber; ct = e.blockTimestamp; await dispatch(e);
+              }
+              if (cb !== -1) await dispatchBlock(cb, ct, cb);
+            }
+          }
+
           lastBlock     = event.blockNumber;
           lastTimestamp = event.blockTimestamp;
           eventsInBlock++;
@@ -381,6 +429,11 @@ export async function createIndexer<S extends SchemaDefinition>(
         },
         { pollIntervalMs: options?.pollIntervalMs },
       );
+    },
+
+    async rollbackTo(blockNumber, chainId = 0) {
+      await store.rollbackToBlock(blockNumber, chainId);
+      await store.writeBlockCheckpoint(blockNumber, undefined, undefined, multichain ? chainId : undefined);
     },
 
     get store() {

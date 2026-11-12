@@ -76,6 +76,20 @@ export interface EntityStore {
    * Returns undefined if no block has been checkpointed yet.
    */
   readCheckpoint(chainId?: number): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
+
+  // --- Reorg support (opt-in; see docs/reorg-design.md) ---
+  /** Turn on the prior-row journal, keeping the last `finalityDepth` blocks. */
+  enableReorg(finalityDepth: number): void;
+  /** Set the block/chain that subsequent writes are journalled under. */
+  setReorgContext(blockNumber: number, chainId: number): void;
+  /** Roll entity state for `chainId` back to the end of `blockNumber` (inclusive). */
+  rollbackToBlock(blockNumber: number, chainId: number): Promise<void>;
+  /** Record the canonical block hash for fork detection. */
+  recordBlockHash(chainId: number, blockNumber: number, blockHash: string): Promise<void>;
+  /** The stored hash for a block, or undefined. */
+  getBlockHash(chainId: number, blockNumber: number): Promise<string | undefined>;
+  /** Drop journal + block-hash rows at or below `belowBlock` (finality pruning). */
+  pruneReorgData(chainId: number, belowBlock: number): Promise<void>;
 }
 
 /** Checkpoint meta-row id: a global singleton, or one row per chain in multichain mode. */
@@ -112,6 +126,14 @@ export function scopeStoreToChain(base: EntityStore, chainId: number): EntitySto
       return base.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId);
     },
     readCheckpoint() { return base.readCheckpoint(chainId); },
+    // Reorg bookkeeping is global (physical ids already carry the chain prefix) —
+    // delegate straight through to the shared base store.
+    enableReorg(finalityDepth) { base.enableReorg(finalityDepth); },
+    setReorgContext(blockNumber, cid) { base.setReorgContext(blockNumber, cid); },
+    rollbackToBlock(blockNumber, cid) { return base.rollbackToBlock(blockNumber, cid); },
+    recordBlockHash(cid, blockNumber, blockHash) { return base.recordBlockHash(cid, blockNumber, blockHash); },
+    getBlockHash(cid, blockNumber) { return base.getBlockHash(cid, blockNumber); },
+    pruneReorgData(cid, belowBlock) { return base.pruneReorgData(cid, belowBlock); },
   };
 }
 
@@ -343,6 +365,68 @@ export async function createStore(
     // Column already exists — safe to ignore.
   }
 
+  // Reorg journal (prior-row snapshots) + canonical block-hash log.
+  const serial = dialect === 'postgres' ? 'BIGSERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+  await adapter.exec(`
+    CREATE TABLE IF NOT EXISTS opindex_journal (
+      seq          ${serial},
+      chain_id     ${intType} NOT NULL,
+      block_number ${intType} NOT NULL,
+      entity       TEXT NOT NULL,
+      entity_id    TEXT NOT NULL,
+      prior_json   TEXT
+    )
+  `);
+  await adapter.exec(`
+    CREATE TABLE IF NOT EXISTS opindex_blockhash (
+      chain_id     ${intType} NOT NULL,
+      block_number ${intType} NOT NULL,
+      block_hash   TEXT NOT NULL,
+      PRIMARY KEY (chain_id, block_number)
+    )
+  `);
+
+  // Reorg journalling state (off until enableReorg()).
+  let reorgDepth = 0;
+  let curBlock = 0;
+  let curChainId = 0;
+
+  /** JSON replacer/reviver so BLOB (Buffer/Uint8Array) prior values round-trip. */
+  const bufReplace = (_k: string, v: unknown): unknown =>
+    v instanceof Uint8Array ? { __buf: Buffer.from(v).toString('hex') } : v;
+  const bufRevive = (_k: string, v: unknown): unknown =>
+    v && typeof v === 'object' && '__buf' in (v as Record<string, unknown>)
+      ? new Uint8Array(Buffer.from((v as { __buf: string }).__buf, 'hex')) : v;
+
+  async function journalPrior(entity: string, physicalId: string): Promise<void> {
+    if (reorgDepth <= 0) return;
+    const prior = await adapter.get<Record<string, unknown>>(
+      `SELECT * FROM ${tableName(entity)} WHERE "id" = ${param(dialect, 1)}`, [physicalId],
+    );
+    const priorJson = prior ? JSON.stringify(prior, bufReplace) : null;
+    const ph = paramList(dialect, 5).join(', ');
+    await adapter.run(
+      `INSERT INTO opindex_journal (chain_id, block_number, entity, entity_id, prior_json) VALUES (${ph})`,
+      [curChainId, curBlock, entity, physicalId, priorJson],
+    );
+  }
+
+  async function restoreRaw(entity: string, raw: Record<string, unknown>): Promise<void> {
+    const table = tableName(entity);
+    const cols = Object.keys(raw);
+    const colList = cols.map(col).join(', ');
+    const ph = paramList(dialect, cols.length).join(', ');
+    const vals = cols.map((c) => raw[c]);
+    if (dialect === 'sqlite') {
+      await adapter.run(`INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`, vals);
+    } else {
+      const updates = cols.filter((c) => c !== 'id').map((c) => `${col(c)} = EXCLUDED.${col(c)}`).join(', ');
+      await adapter.run(
+        `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ("id") DO UPDATE SET ${updates}`, vals,
+      );
+    }
+  }
+
   function assertKnown(entity: string): EntityDef {
     return schema.getEntity(entity); // throws if unknown
   }
@@ -371,6 +455,7 @@ export async function createStore(
       const table = tableName(entity);
       const fields = Object.keys(def);
       const values = [id, ...fields.map((f) => serialise(data[f], def[f].type, dialect))];
+      await journalPrior(entity, id);
       const t0 = Date.now();
       await adapter.run(buildUpsert(table, fields, dialect), values);
       logger.trace('store', 'set', { entity, id, elapsed_ms: Date.now() - t0 });
@@ -406,6 +491,7 @@ export async function createStore(
       }
       if (setClauses.length === 0) return;
 
+      await journalPrior(entity, id);
       const whereParam = param(dialect, setValues.length + 1);
       const t0 = Date.now();
       await adapter.run(
@@ -425,6 +511,7 @@ export async function createStore(
     async delete(entity, id) {
       assertKnown(entity);
       const table = tableName(entity);
+      await journalPrior(entity, id);
       const t0 = Date.now();
       await adapter.run(
         `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
@@ -495,6 +582,76 @@ export async function createStore(
         tipBlock:    row.tip_block    ?? undefined,
         lastBlockTs: row.last_block_ts ?? undefined,
       };
+    },
+
+    enableReorg(finalityDepth) {
+      reorgDepth = finalityDepth;
+    },
+
+    setReorgContext(blockNumber, chainId) {
+      curBlock = blockNumber;
+      curChainId = chainId;
+    },
+
+    async rollbackToBlock(blockNumber, chainId) {
+      // Replay the journal for blocks after the fork in reverse write order:
+      // restoring each prior row (last restore wins) leaves each entity at its
+      // state as of `blockNumber`. prior_json === null means "did not exist".
+      const entries = await adapter.all<{ entity: string; entity_id: string; prior_json: string | null }>(
+        `SELECT entity, entity_id, prior_json FROM opindex_journal
+         WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}
+         ORDER BY seq DESC`,
+        [chainId, blockNumber],
+      );
+      for (const e of entries) {
+        if (e.prior_json === null) {
+          await adapter.run(`DELETE FROM ${tableName(e.entity)} WHERE "id" = ${param(dialect, 1)}`, [e.entity_id]);
+        } else {
+          await restoreRaw(e.entity, JSON.parse(e.prior_json, bufRevive) as Record<string, unknown>);
+        }
+      }
+      await adapter.run(
+        `DELETE FROM opindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+        [chainId, blockNumber],
+      );
+      await adapter.run(
+        `DELETE FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+        [chainId, blockNumber],
+      );
+    },
+
+    async recordBlockHash(chainId, blockNumber, blockHash) {
+      if (dialect === 'sqlite') {
+        await adapter.run(
+          `INSERT OR REPLACE INTO opindex_blockhash (chain_id, block_number, block_hash) VALUES (?, ?, ?)`,
+          [chainId, blockNumber, blockHash],
+        );
+      } else {
+        await adapter.run(
+          `INSERT INTO opindex_blockhash (chain_id, block_number, block_hash) VALUES ($1, $2, $3)
+           ON CONFLICT (chain_id, block_number) DO UPDATE SET block_hash = EXCLUDED.block_hash`,
+          [chainId, blockNumber, blockHash],
+        );
+      }
+    },
+
+    async getBlockHash(chainId, blockNumber) {
+      const row = await adapter.get<{ block_hash: string }>(
+        `SELECT block_hash FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number = ${param(dialect, 2)}`,
+        [chainId, blockNumber],
+      );
+      return row?.block_hash;
+    },
+
+    async pruneReorgData(chainId, belowBlock) {
+      await adapter.run(
+        `DELETE FROM opindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
+        [chainId, belowBlock],
+      );
+      await adapter.run(
+        `DELETE FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
+        [chainId, belowBlock],
+      );
     },
   };
 }
