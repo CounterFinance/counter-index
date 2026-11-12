@@ -551,8 +551,8 @@ export async function createStore(
       assertKnown(entity);
       const table = tableName(entity);
       const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
-      const row = await adapter.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
-      return row?.n ?? 0;
+      const row = await adapter.get<{ n: number | string }>(`SELECT COUNT(*) AS n FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
+      return Number(row?.n ?? 0);   // Postgres returns COUNT(*) (bigint) as a string
     },
 
     async find(entity, predicate, chainId) {
@@ -596,10 +596,11 @@ export async function createStore(
         [checkpointId(chainId)],
       );
       if (!row) return undefined;
+      // Postgres returns BIGINT columns as strings — coerce to number.
       return {
-        lastBlock:   row.last_block,
-        tipBlock:    row.tip_block    ?? undefined,
-        lastBlockTs: row.last_block_ts ?? undefined,
+        lastBlock:   Number(row.last_block),
+        tipBlock:    row.tip_block     != null ? Number(row.tip_block)     : undefined,
+        lastBlockTs: row.last_block_ts != null ? Number(row.last_block_ts) : undefined,
       };
     },
 

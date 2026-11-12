@@ -5,3 +5,5 @@ dist/
 dist/
 coverage/
 coverage/
+reports/
+.stryker-tmp/

@@ -38,10 +38,14 @@
     "bench": "tsx dogfood/bench.ts",
     "coverage": "vitest run --coverage",
     "dogfood:mainnet": "tsx dogfood/evm-mainnet.ts",
-    "dogfood:atomicity": "tsx dogfood/atomicity.ts"
+    "dogfood:atomicity": "tsx dogfood/atomicity.ts",
+    "test:pg": "bash scripts/pg-test.sh",
+    "mutation": "stryker run"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@stryker-mutator/core": "^8.7.1",
+    "@stryker-mutator/vitest-runner": "^8.7.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
