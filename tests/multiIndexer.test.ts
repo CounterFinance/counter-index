@@ -60,6 +60,8 @@ describe('createMultiIndexer', () => {
 
     const rows = await mi.store.list('TokenHolder');
     expect(rows).toHaveLength(4);   // A,B on chain 1 + A,B on chain 2 — distinct rows
+    // Composite (chainId, id) PK: ids are clean, NOT "1:A" prefixed.
+    expect(rows.map((r) => r['id']).sort()).toEqual(['A', 'A', 'B', 'B']);
 
     const bal = (chainId: number, holder: string): bigint => {
       const r = rows.find((x) => x['chainId'] === chainId && x['holder'] === holder);

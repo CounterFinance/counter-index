@@ -31,28 +31,32 @@ export interface StoreChangeEvent {
 }
 
 export interface EntityStore {
-  /** Get a single entity by id. Returns undefined if not found. */
-  get(entity: string, id: string): Promise<Record<string, unknown> | undefined>;
+  // `chainId` scopes the operation to one chain in a multichain schema (composite
+  // (chainId, id) key); omit it for single-chain schemas.
 
-  /** Insert or overwrite an entity by id. */
+  /** Get a single entity by id. Returns undefined if not found. */
+  get(entity: string, id: string, chainId?: number): Promise<Record<string, unknown> | undefined>;
+
+  /** Insert or overwrite an entity by id (multichain: `data.chainId` identifies the chain). */
   set(entity: string, id: string, data: Record<string, unknown>): Promise<void>;
 
   /** Merge partial fields into an existing entity. Throws if not found. */
-  update(entity: string, id: string, partial: Record<string, unknown>): Promise<void>;
+  update(entity: string, id: string, partial: Record<string, unknown>, chainId?: number): Promise<void>;
 
   /** Delete an entity by id. No-op if not found. */
-  delete(entity: string, id: string): Promise<void>;
+  delete(entity: string, id: string, chainId?: number): Promise<void>;
 
-  /** List all entities of a given type. */
-  list(entity: string): Promise<Record<string, unknown>[]>;
+  /** List all entities of a given type (optionally one chain). */
+  list(entity: string, chainId?: number): Promise<Record<string, unknown>[]>;
 
-  /** Count entities of a given type. */
-  count(entity: string): Promise<number>;
+  /** Count entities of a given type (optionally one chain). */
+  count(entity: string, chainId?: number): Promise<number>;
 
-  /** Find entities matching a predicate (JS-side filtering after SELECT *). */
+  /** Find entities matching a predicate (SELECT filtered by chain, then JS predicate). */
   find(
     entity: string,
     predicate: (record: Record<string, unknown>) => boolean,
+    chainId?: number,
   ): Promise<Record<string, unknown>[]>;
 
   /**
@@ -98,36 +102,27 @@ function checkpointId(chainId?: number): string {
 }
 
 /**
- * Wrap a store so every call is scoped to one chain: writes stamp `chainId` and
- * namespace the id as `<chainId>:<id>`; reads unwrap the id and filter to the
- * chain; checkpoints key per chain. Used by the indexer for multichain schemas.
- * The underlying physical store is shared across chains.
+ * Wrap a store so every call is scoped to one chain: writes stamp `chainId`,
+ * reads filter by it in SQL (composite (chainId, id) primary key), and
+ * checkpoints key per chain. Used by the indexer for multichain schemas. The
+ * underlying physical store is shared across chains.
  */
 export function scopeStoreToChain(base: EntityStore, chainId: number): EntityStore {
-  const prefix = `${chainId}:`;
-  const key = (id: string): string => `${prefix}${id}`;
-  const unkey = (id: string): string => (id.startsWith(prefix) ? id.slice(prefix.length) : id);
-  const strip = (row: Record<string, unknown> | undefined): Record<string, unknown> | undefined =>
-    row ? { ...row, id: unkey(row['id'] as string) } : undefined;
-  const mine = (row: Record<string, unknown>): boolean => Number(row['chainId']) === chainId;
-
+  // No id munging: the physical table has a composite (chainId, id) primary key,
+  // so we just thread `chainId` through to the base store, which filters in SQL.
   return {
-    async get(entity, id) { return strip(await base.get(entity, key(id))); },
-    async set(entity, id, data) { return base.set(entity, key(id), { ...data, chainId }); },
-    async update(entity, id, partial) { return base.update(entity, key(id), partial); },
-    async delete(entity, id) { return base.delete(entity, key(id)); },
-    async list(entity) { return (await base.list(entity)).filter(mine).map((r) => strip(r)!); },
-    async count(entity) { return (await base.list(entity)).filter(mine).length; },
-    async find(entity, predicate) {
-      return (await base.list(entity)).filter(mine).map((r) => strip(r)!).filter(predicate);
-    },
+    get(entity, id) { return base.get(entity, id, chainId); },
+    set(entity, id, data) { return base.set(entity, id, { ...data, chainId }); },
+    update(entity, id, partial) { return base.update(entity, id, partial, chainId); },
+    delete(entity, id) { return base.delete(entity, id, chainId); },
+    list(entity) { return base.list(entity, chainId); },
+    count(entity) { return base.count(entity, chainId); },
+    find(entity, predicate) { return base.find(entity, predicate, chainId); },
     onChange(handler) { return base.onChange(handler); },
     writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp) {
       return base.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId);
     },
     readCheckpoint() { return base.readCheckpoint(chainId); },
-    // Reorg bookkeeping is global (physical ids already carry the chain prefix) —
-    // delegate straight through to the shared base store.
     enableReorg(finalityDepth) { base.enableReorg(finalityDepth); },
     setReorgContext(blockNumber, cid) { base.setReorgContext(blockNumber, cid); },
     rollbackToBlock(blockNumber, cid) { return base.rollbackToBlock(blockNumber, cid); },
@@ -292,14 +287,17 @@ function notNullDefault(type: FieldType, dialect: 'sqlite' | 'postgres'): string
   }
 }
 
-function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres'): string {
+function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres', multichain: boolean): string {
   const table = tableName(entity);
-  const cols = ['"id" TEXT NOT NULL PRIMARY KEY'];
+  // Multichain: the primary key is composite (chainId, id); `chainId` is an
+  // injected field (added by defineSchema) so it lands as a column in the loop.
+  const cols = [multichain ? '"id" TEXT NOT NULL' : '"id" TEXT NOT NULL PRIMARY KEY'];
   for (const [field, fieldDef] of Object.entries(def)) {
     const sqlType = fieldTypeSql(fieldDef.type, dialect);
     const constraint = fieldDef.optional ? '' : ` ${notNullDefault(fieldDef.type, dialect)}`;
     cols.push(`${col(field)} ${sqlType}${constraint}`);
   }
+  if (multichain) cols.push(`PRIMARY KEY (${col('chainId')}, "id")`);
   return `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
 }
 
@@ -314,16 +312,19 @@ function buildUpsert(
   table: string,
   fields: string[],
   dialect: 'sqlite' | 'postgres',
+  multichain: boolean,
 ): string {
   const colList = ['"id"', ...fields.map(col)].join(', ');
   const ph = paramList(dialect, fields.length + 1).join(', ');
 
   if (dialect === 'sqlite') {
+    // INSERT OR REPLACE replaces by the full primary key (composite in multichain).
     return `INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`;
   }
 
-  const updates = fields.map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
-  return `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ("id") DO UPDATE SET ${updates}`;
+  const conflict = multichain ? `(${col('chainId')}, "id")` : `("id")`;
+  const updates = fields.filter((f) => f !== 'chainId').map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
+  return `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ${conflict} DO UPDATE SET ${updates}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,12 +337,19 @@ export async function createStore(
   logger: IndexerLogger = noopLogger,
 ): Promise<EntityStore> {
   const dialect = adapter.dialect;
+  const multichain = schema.multichain;
 
   // Create all entity tables
   for (const name of schema.entityNames()) {
     const def = schema.getEntity(name);
-    const ddl = buildCreateTable(name, def, dialect);
+    const ddl = buildCreateTable(name, def, dialect, multichain);
     await adapter.exec(ddl);
+  }
+
+  /** Append `AND "chainId" = ?` (+ its param) when a chain is specified. */
+  function chainClause(chainId: number | undefined, nextParamIdx: number): { sql: string; params: unknown[] } {
+    if (chainId === undefined) return { sql: '', params: [] };
+    return { sql: ` AND ${col('chainId')} = ${param(dialect, nextParamIdx)}`, params: [chainId] };
   }
 
   // Indexed-block checkpoint — one singleton row, updated atomically with
@@ -400,8 +408,11 @@ export async function createStore(
 
   async function journalPrior(entity: string, physicalId: string): Promise<void> {
     if (reorgDepth <= 0) return;
+    // Multichain rows share ids across chains, so scope the prior-row read by chain.
+    const chainFilter = multichain ? ` AND ${col('chainId')} = ${param(dialect, 2)}` : '';
     const prior = await adapter.get<Record<string, unknown>>(
-      `SELECT * FROM ${tableName(entity)} WHERE "id" = ${param(dialect, 1)}`, [physicalId],
+      `SELECT * FROM ${tableName(entity)} WHERE "id" = ${param(dialect, 1)}${chainFilter}`,
+      multichain ? [physicalId, curChainId] : [physicalId],
     );
     const priorJson = prior ? JSON.stringify(prior, bufReplace) : null;
     const ph = paramList(dialect, 5).join(', ');
@@ -420,9 +431,11 @@ export async function createStore(
     if (dialect === 'sqlite') {
       await adapter.run(`INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`, vals);
     } else {
-      const updates = cols.filter((c) => c !== 'id').map((c) => `${col(c)} = EXCLUDED.${col(c)}`).join(', ');
+      const conflict = multichain ? `(${col('chainId')}, "id")` : `("id")`;
+      const keyCols = multichain ? ['id', 'chainId'] : ['id'];
+      const updates = cols.filter((c) => !keyCols.includes(c)).map((c) => `${col(c)} = EXCLUDED.${col(c)}`).join(', ');
       await adapter.run(
-        `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ("id") DO UPDATE SET ${updates}`, vals,
+        `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ${conflict} DO UPDATE SET ${updates}`, vals,
       );
     }
   }
@@ -439,12 +452,13 @@ export async function createStore(
   }
 
   return {
-    async get(entity, id) {
+    async get(entity, id, chainId) {
       const def = assertKnown(entity);
       const table = tableName(entity);
+      const c = chainClause(chainId, 2);
       const row = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}${c.sql}`,
+        [id, ...c.params],
       );
       if (!row) return undefined;
       return deserialiseRow(row, def);
@@ -457,7 +471,7 @@ export async function createStore(
       const values = [id, ...fields.map((f) => serialise(data[f], def[f].type, dialect))];
       await journalPrior(entity, id);
       const t0 = Date.now();
-      await adapter.run(buildUpsert(table, fields, dialect), values);
+      await adapter.run(buildUpsert(table, fields, dialect, multichain), values);
       logger.trace('store', 'set', { entity, id, elapsed_ms: Date.now() - t0 });
 
       // Notify with the JS-typed record (not the serialised SQL form)
@@ -472,12 +486,13 @@ export async function createStore(
       notify({ entity, id, record, operation: 'set' });
     },
 
-    async update(entity, id, partial) {
+    async update(entity, id, partial, chainId) {
       const def = assertKnown(entity);
       const table = tableName(entity);
+      const cSel = chainClause(chainId, 2);
       const existing = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}${cSel.sql}`,
+        [id, ...cSel.params],
       );
       if (!existing) throw new Error(`${entity} with id "${id}" not found`);
 
@@ -493,55 +508,59 @@ export async function createStore(
 
       await journalPrior(entity, id);
       const whereParam = param(dialect, setValues.length + 1);
+      const cUpd = chainClause(chainId, setValues.length + 2);
       const t0 = Date.now();
       await adapter.run(
-        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ${whereParam}`,
-        [...setValues, id],
+        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ${whereParam}${cUpd.sql}`,
+        [...setValues, id, ...cUpd.params],
       );
       logger.trace('store', 'update', { entity, id, fields: setClauses.length, elapsed_ms: Date.now() - t0 });
 
       // Re-read the full row so the notification has the complete merged record
+      const cRe = chainClause(chainId, 2);
       const updated = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}${cRe.sql}`,
+        [id, ...cRe.params],
       );
       notify({ entity, id, record: updated ? deserialiseRow(updated, def) : null, operation: 'update' });
     },
 
-    async delete(entity, id) {
+    async delete(entity, id, chainId) {
       assertKnown(entity);
       const table = tableName(entity);
       await journalPrior(entity, id);
+      const c = chainClause(chainId, 2);
       const t0 = Date.now();
       await adapter.run(
-        `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}${c.sql}`,
+        [id, ...c.params],
       );
       logger.trace('store', 'delete', { entity, id, elapsed_ms: Date.now() - t0 });
       notify({ entity, id, record: null, operation: 'delete' });
     },
 
-    async list(entity) {
+    async list(entity, chainId) {
       const def = assertKnown(entity);
       const table = tableName(entity);
-      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}`);
+      const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
+      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
       return rows.map((r) => deserialiseRow(r, def));
     },
 
-    async count(entity) {
+    async count(entity, chainId) {
       assertKnown(entity);
       const table = tableName(entity);
-      const row = await adapter.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
+      const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
+      const row = await adapter.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
       return row?.n ?? 0;
     },
 
-    async find(entity, predicate) {
+    async find(entity, predicate, chainId) {
       const def = assertKnown(entity);
       const table = tableName(entity);
-      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}`);
-      return rows
-        .map((r) => deserialiseRow(r, def))
-        .filter(predicate);
+      const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
+      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
+      return rows.map((r) => deserialiseRow(r, def)).filter(predicate);
     },
 
     onChange(handler) {
@@ -605,7 +624,8 @@ export async function createStore(
       );
       for (const e of entries) {
         if (e.prior_json === null) {
-          await adapter.run(`DELETE FROM ${tableName(e.entity)} WHERE "id" = ${param(dialect, 1)}`, [e.entity_id]);
+          const cf = multichain ? ` AND ${col('chainId')} = ${param(dialect, 2)}` : '';
+          await adapter.run(`DELETE FROM ${tableName(e.entity)} WHERE "id" = ${param(dialect, 1)}${cf}`, multichain ? [e.entity_id, chainId] : [e.entity_id]);
         } else {
           await restoreRaw(e.entity, JSON.parse(e.prior_json, bufRevive) as Record<string, unknown>);
         }
