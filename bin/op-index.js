@@ -3,7 +3,7 @@
  * op-index CLI — scaffold a new op-index indexer project.
  *
  * Usage:
- *   npx @opnet-devs/op-index init [project-name]
+ *   npx @opnet-collective/op-index init [project-name]
  *
  * Generates a ready-to-run starter project in ./<project-name>/ next to wherever
  * the command is run from. Refuses to write into a non-empty directory.
@@ -55,7 +55,7 @@ const files = {
     "build": "tsc"
   },
   "dependencies": {
-    "@opnet-devs/op-index": "^0.1.0",
+    "@opnet-collective/op-index": "^0.1.0",
     "opnet": "^1.0.0"
   },
   "devDependencies": {
@@ -170,7 +170,7 @@ volumes:
   'src/main.ts': `import {
   defineSchema, createIndexer,
   DbEventSource, openSqlite,
-} from '@opnet-devs/op-index';
+} from '@opnet-collective/op-index';
 import { registerTransferHandlers } from './handlers/transfers.js';
 
 const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '/data/opstream.db';
@@ -213,7 +213,7 @@ process.on('SIGTERM', async () => {
 });
 `,
 
-  'src/handlers/transfers.ts': `import type { Indexer } from '@opnet-devs/op-index';
+  'src/handlers/transfers.ts': `import type { Indexer } from '@opnet-collective/op-index';
 
 export function registerTransferHandlers(indexer: Indexer): void {
   indexer.on('Transferred', async (event, ctx) => {

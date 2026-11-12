@@ -70,6 +70,7 @@ export type BlockHandler<S extends SchemaDefinition = SchemaDefinition> =
 export class HandlerRegistry {
   private handlers = new Map<string, EventHandler[]>();
   private wildcardHandlers: EventHandler[] = [];
+  private blockStartHandlers: BlockHandler[] = [];
   private blockHandlers: BlockHandler[] = [];
 
   /**
@@ -92,6 +93,18 @@ export class HandlerRegistry {
   /** Register a block handler. Fires once per block after all its events are dispatched. */
   onBlock(handler: BlockHandler): void {
     this.blockHandlers.push(handler);
+  }
+
+  /** Register a BEFORE-block handler. Fires once per block, before its events (middleware). */
+  beforeBlock(handler: BlockHandler): void {
+    this.blockStartHandlers.push(handler);
+  }
+
+  /** Dispatch the block-start signal to all before-block handlers. */
+  async dispatchBlockStart(context: BlockContext): Promise<void> {
+    for (const handler of this.blockStartHandlers) {
+      await handler(context);
+    }
   }
 
   /** Dispatch an event to all matching handlers. Awaits async handlers in sequence. */

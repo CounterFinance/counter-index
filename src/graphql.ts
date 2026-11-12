@@ -110,6 +110,13 @@ function renderMetrics(status: Record<string, unknown>): string {
     if (typeof v === 'boolean') { lines.push(`opindex_${k} ${v ? 1 : 0}`); continue; }
     if (k === 'health' && v && typeof v === 'object') { renderHealth(v as HealthLike, lines); continue; }
     if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('opindex_handler_latency_ms', v as HistogramLike, lines); continue; }
+    if (k === 'handlersByEvent' && v && typeof v === 'object') {
+      for (const [event, s] of Object.entries(v as Record<string, { calls?: number; sumMs?: number }>)) {
+        if (typeof s?.calls === 'number') lines.push(`opindex_handler_calls{event="${event}"} ${s.calls}`);
+        if (typeof s?.sumMs === 'number') lines.push(`opindex_handler_ms_sum{event="${event}"} ${s.sumMs}`);
+      }
+      continue;
+    }
     if (v && typeof v === 'object') {
       for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
         if (typeof v2 === 'number') lines.push(`opindex_${k}{key="${k2}"} ${v2}`);
