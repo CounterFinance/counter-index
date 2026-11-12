@@ -126,6 +126,21 @@ describe('EvmLogSource.queryStream', () => {
     expect(all).toHaveLength(2);
   });
 
+  it('subscribe() polls for new blocks, delivers them, and stop() halts', async () => {
+    const { client } = mockClient();
+    const source = new EvmLogSource({ chainId: 1, network: 'eth', abi: erc20Abi as unknown as Abi, client });
+    const got: ChainEvent[] = [];
+    const stop = source.subscribe(100, async (e) => { got.push(e); }, { pollIntervalMs: 10_000 });
+    await new Promise((r) => setTimeout(r, 60));   // let the first poll run
+    stop();
+    const countAfterStop = got.length;
+    expect(countAfterStop).toBe(2);                // blocks 100 and 101 delivered once
+    expect(got[0]!.eventName).toBe('Transfer');
+    expect(got[0]!.blockTimestamp).toBe(1_700_000_100);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(got.length).toBe(countAfterStop);       // no further polls after stop()
+  });
+
   it('groups sibling logs per tx into txEvents', async () => {
     const { client } = mockClient();
     const source = new EvmLogSource({ chainId: 1, network: 'eth', abi: erc20Abi as unknown as Abi, client });
