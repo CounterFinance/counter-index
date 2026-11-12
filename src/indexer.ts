@@ -27,6 +27,7 @@ import { isDynamicSource } from './source.js';
 import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerContext, type BlockContext } from './handler.js';
 import type { ChainEvent } from './types.js';
 import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type ServeOptions, type ServeHandle } from './graphql.js';
+import { buildReadPath } from './serving.js';
 import { noopLogger, type IndexerLogger } from './logger.js';
 import {
   Lifecycle, Histogram, noopTracer,
@@ -762,7 +763,17 @@ export async function createIndexer<S extends SchemaDefinition>(
         handlersByEvent: computeHandlerStats(),
       });
       const serveOptions = { ...options, status: options?.status ?? defaultStatus };
-      const { server, url } = startGraphQLServer(gqlSchema, serveOptions);
+      // Serving-scale read path (opidx-#57): REST / SQL-over-HTTP / SSE, built on
+      // the same store.query pushdown. Inherits the GraphQL endpoint's auth token
+      // and page cap unless the readPath config overrides them.
+      const readRouter = options?.readPath
+        ? buildReadPath(config.schema, store, {
+            maxPageSize: options.maxPageSize,
+            auth: options.auth,
+            ...options.readPath,
+          })
+        : undefined;
+      const { server, url } = startGraphQLServer(gqlSchema, serveOptions, readRouter);
       if (options?.subscriptions) {
         await startSubscriptionServer(gqlSchema, server);
       }

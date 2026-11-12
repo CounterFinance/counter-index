@@ -24,6 +24,10 @@ export { loadConfig, ConfigError, type ConfigSchema, type ConfigField, type Conf
 
 export { defineCandles, candleEntity, candleBucket, type DefineCandlesOptions } from './candles.js';
 
+// --- Serving-scale read path (REST + SQL-over-HTTP + SSE) — opidx-#57 -------
+
+export { buildReadPath, type ReadPathOptions, type RestOptions, type ReadRouter } from './serving.js';
+
 // --- Operability (health, metrics, tracing, retry) — M18 -------------------
 
 export {
