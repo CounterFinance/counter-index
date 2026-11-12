@@ -5,9 +5,17 @@ to SQLite or Postgres, and serve it over a GraphQL API with cursor pagination an
 subscriptions — all auto-generated from your schema, zero codegen.
 
 The core engine is chain-agnostic; each chain ships as a source adapter under
-`src/chains/<chain>`. [OPNET](https://opnet.org) (Bitcoin L2) is the first adapter; EVM and
-Solana adapters are on the [roadmap](docs/multichain-roadmap.md). All chain-specific context
-(addresses, gas, revert reasons) lives under a ChainEvent's `chainMeta`, keyed by `kind`.
+`src/chains/<chain>`. **Two adapters exist today: [OPNET](https://opnet.org) (Bitcoin L2)
+and EVM** (`EvmLogSource`/`EvmAbiDecoder`, via `eth_getLogs`); a Solana adapter is designed
+but not built. Adding a chain is ~two classes and touches no core code — see
+[Adding a chain](docs/adding-a-chain.md). All chain-specific context (addresses, gas, topics,
+revert reasons) lives under a ChainEvent's `chainMeta`, keyed by `kind`.
+
+Multichain (several chains into one store + GraphQL, filtered by `chainId`), reorg handling
+(journalled rollback + fork detection), factory/dynamic sources, a typed store, `/metrics` +
+`/health`, and a runnable [EVM portfolio example](examples/evm-portfolio) are all in — see the
+[roadmap](docs/multichain-roadmap.md) for status and the honest list of what's deferred
+(HyperSync, batched writes).
 
 ```
   OpStream DB --> DbEventSource   ‾‾‾‾‾‾‾‾\
@@ -83,6 +91,11 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 | [Sources](docs/sources.md) | `DbEventSource`, `RpcEventSource`, `createEventSource`, Postgres |
 | [GraphQL](docs/graphql.md) | `serve()`, queries, cursor pagination, filters, subscriptions |
 | [Decoders](docs/decoders.md) | Built-in OPNET decoders + `registerDecoder()` |
+| [Adding a chain](docs/adding-a-chain.md) | How to add a new chain adapter + checklist |
+| [Multichain roadmap](docs/multichain-roadmap.md) | Architecture, milestones, external references |
+| [Reorg design](docs/reorg-design.md) | Journal, rollback, fork detection, finality |
+| [Logging](docs/logging.md) | Bring-your-own + the pino-compatible built-in logger |
+| [Benchmarks](docs/benchmarks.md) | Backfill throughput + the cross-tool harness |
 | [Deployment](docs/deployment.md) | Docker, docker-compose, justfile |
 
 ## Roadmap
