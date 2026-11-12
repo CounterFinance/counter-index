@@ -41,6 +41,20 @@ describe('createLogger', () => {
     expect(lines[0]).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3} INFO\s+\(store\): wrote entity=Holder ms=2$/);
   });
 
+  it('attaches base bindings (pid/hostname) to JSON, overridable', () => {
+    const def = capture({ pretty: false });
+    def.log.info('x', 'm');
+    const obj = JSON.parse(def.lines[0]!) as Record<string, unknown>;
+    expect(typeof obj['pid']).toBe('number');
+    expect(typeof obj['hostname']).toBe('string');
+
+    const custom = capture({ pretty: false, base: { service: 'op-index' } });
+    custom.log.info('x', 'm');
+    const o2 = JSON.parse(custom.lines[0]!) as Record<string, unknown>;
+    expect(o2['service']).toBe('op-index');
+    expect(o2['pid']).toBeUndefined();   // replaced, not merged
+  });
+
   it('serialises bigint fields without throwing', () => {
     const { lines, log } = capture({ pretty: false, level: 'trace' });
     expect(() => log.trace('store', 'bignum', { v: 123n })).not.toThrow();
