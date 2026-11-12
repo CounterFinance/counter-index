@@ -66,7 +66,10 @@ async function main(): Promise<void> {
 
     const bal = async (): Promise<Record<string, string>> => {
       const rows = await indexer.store.list('Balance');
-      return Object.fromEntries(rows.map((r) => [r.holder as string, String(r.amount)]));
+      // Canonicalise key order — row iteration order is not part of the state, so
+      // the snapshot comparison must be order-independent.
+      const entries = rows.map((r) => [r.holder as string, String(r.amount)] as const).sort((a, b) => a[0].localeCompare(b[0]));
+      return Object.fromEntries(entries);
     };
 
     await indexer.sync(0, t1);
