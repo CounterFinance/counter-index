@@ -170,13 +170,19 @@ round-trip is a full RTT.
       server stays up (`tests/security.test.ts`).
 *Why:* "is it alive, how far behind, why is it slow" must be answerable at 3am.
 
-### M19 — Deploy, config & migrations · P1 · ~2–3 days
-- [ ] Production **Docker image** (multi-stage, non-root, dumb-init) + **Railway/k8s**
-      deploy docs; horizontal-scaling model (one process per chain/profile).
-- [ ] **Config validation** (env + file) with a schema (zod-style) and clear errors.
-- [ ] **Incremental schema migrations** instead of `RESET_DB`-from-genesis.
-- [ ] **Fast-sync / snapshot restore** from a peer (like OPNET's SYNC_SOURCE), and
-      data-retention/pruning policies.
+### M19 — Deploy, config & migrations · P1 · **DONE** (opidx-#53)
+- [x] **Config validation** (`loadConfig`): dependency-free schema validator —
+      coerces env types, applies defaults, reports **every** problem at once with a
+      clear `ConfigError`. (string/number/integer/boolean/url, min/max/enum/custom env.)
+- [x] **Incremental schema migrations**: adding a field `ALTER TABLE ADD COLUMN`s
+      in place on startup (existing rows get the default) — no reset-from-genesis.
+      Idempotent; lossy changes are intentionally NOT auto-applied. SQLite + PG.
+- [x] Production **Docker image** (multi-stage, non-root, **dumb-init** so SIGTERM
+      reaches shutdown) + **Railway/k8s** deploy docs + horizontal-scaling model
+      (partition writers per chain; stateless read replicas). docs/deploy.md +
+      docs/deploy/Dockerfile (buildkit-validated).
+- [ ] **Fast-sync / snapshot restore** from a peer + retention policies — deferred
+      (documented: re-index from fromBlock or restore a PG base backup).
 *Why:* re-indexing from genesis on every schema tweak is a dealbreaker at scale.
 
 ---
