@@ -1,3 +1,5 @@
+import { hostname as osHostname } from 'node:os';
+
 /**
  * Five-level logger contract (industry-standard hierarchy):
  *
@@ -49,6 +51,12 @@ export interface LoggerOptions {
   pretty?: boolean;
   /** Sink for a finished line (no trailing newline). Default: stdout. */
   write?: (line: string) => void;
+  /**
+   * Base bindings attached to every JSON line (like pino's pid/hostname). Default
+   * `{ pid, hostname }`. Pass `{}` to drop them, or add your own (service, env…).
+   * Omitted from pretty output to keep it human-readable.
+   */
+  base?: Record<string, unknown>;
 }
 
 function formatValue(v: unknown): string {
@@ -71,14 +79,16 @@ export function createLogger(options: LoggerOptions = {}): IndexerLogger {
   const pretty = options.pretty ?? isTty;
   const color = pretty && isTty;
   const write = options.write ?? ((line: string): void => { process.stdout.write(line + '\n'); });
+  const base = options.base ?? { pid: process.pid, hostname: osHostname() };
 
   const emit = (level: LogLevel, ctx: string, msg: string, extra?: Record<string, unknown>): void => {
     if (LEVEL_VALUE[level] < min) return;
     const time = Date.now();
 
     if (!pretty) {
+      // pino-shaped: level, time, base bindings, then ctx/msg/fields.
       // Replacer keeps bigint (and other non-JSON values) from throwing.
-      write(JSON.stringify({ level: LEVEL_VALUE[level], time, ctx, msg, ...extra },
+      write(JSON.stringify({ level: LEVEL_VALUE[level], time, ...base, ctx, msg, ...extra },
         (_k: string, v: unknown): unknown => (typeof v === 'bigint' ? v.toString() : v)));
       return;
     }
