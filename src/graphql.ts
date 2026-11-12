@@ -41,7 +41,7 @@ import {
 } from 'graphql';
 import type { GraphQLFieldConfigMap, GraphQLInputFieldConfigMap, GraphQLEnumValueConfigMap, DocumentNode, SelectionNode } from 'graphql';
 import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
-import type { EntityStore } from './store.js';
+import type { EntityStore, StoreFilter, FilterOp } from './store.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -206,12 +206,32 @@ function opsForType(type: FieldType): readonly string[] {
 // Cursor helpers — opaque base64-encoded entity id
 // ---------------------------------------------------------------------------
 
-function encodeCursor(id: string): string {
-  return Buffer.from(id, 'utf8').toString('base64');
+/** A keyset cursor carries the order-by value + id, so paging is stable in SQL. */
+function encodeCursor(id: string, sortValue: string): string {
+  return Buffer.from(JSON.stringify({ i: id, s: sortValue }), 'utf8').toString('base64');
 }
 
-function decodeCursor(cursor: string): string {
-  return Buffer.from(cursor, 'base64').toString('utf8');
+function decodeCursor(cursor: string): { i: string; s: string } {
+  try {
+    const o = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as { i?: unknown; s?: unknown };
+    const str = (v: unknown): string => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+    return { i: str(o.i), s: str(o.s) };
+  } catch {
+    // Back-compat: a legacy id-only cursor (plain base64 id).
+    const id = Buffer.from(cursor, 'base64').toString('utf8');
+    return { i: id, s: id };
+  }
+}
+
+/** Reconstruct a typed cursor sort value from its stringified form. */
+function coerceCursorValue(s: string, type: FieldType): unknown {
+  switch (type) {
+    case 'bigint':  return BigInt(s);
+    case 'int':
+    case 'float':   return Number(s);
+    case 'boolean': return s === 'true' || s === '1';
+    default:        return s;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -243,11 +263,14 @@ function buildFilterType(entityName: string, def: EntityDef): GraphQLInputObject
   for (const op of STRING_OPS) {
     fields[`id${op}`] = { type: GraphQLString };
   }
+  fields['id_in'] = { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) };
   for (const [fieldName, fieldDef] of Object.entries(def)) {
     const base = gqlInputType(fieldDef.type);
     for (const op of opsForType(fieldDef.type)) {
       fields[`${fieldName}${op}`] = { type: base };
     }
+    // Membership filter: `field_in: [T]` → SQL `IN (...)`.
+    fields[`${fieldName}_in`] = { type: new GraphQLList(new GraphQLNonNull(base)) };
   }
   return new GraphQLInputObjectType({ name: `${entityName}_filter`, fields });
 }
@@ -288,7 +311,8 @@ function buildConnectionType(entityName: string, entityType: GraphQLObjectType):
 // Where filter — apply to a record
 // ---------------------------------------------------------------------------
 
-const KNOWN_OPS = ['not', 'gt', 'lt', 'gte', 'lte', 'contains', 'starts_with', 'ends_with'];
+// Order matters: multi-char suffixes (starts_with) before their prefixes; `in` last.
+const KNOWN_OPS = ['not', 'gte', 'lte', 'gt', 'lt', 'contains', 'starts_with', 'ends_with', 'in'];
 
 function parseFilterKey(key: string): { field: string; op: string } {
   for (const op of KNOWN_OPS) {
@@ -299,59 +323,15 @@ function parseFilterKey(key: string): { field: string; op: string } {
   return { field: key, op: 'eq' };
 }
 
-function compareValues(a: unknown, b: unknown, type: FieldType): number {
-  if (type === 'bigint') {
-    const ba = BigInt(String(a));
-    const bb = BigInt(String(b));
-    return ba < bb ? -1 : ba > bb ? 1 : 0;
-  }
-  if (type === 'int' || type === 'float') return Number(a) - Number(b);
-  return String(a).localeCompare(String(b));
-}
-
-function matchesFilter(
-  record: Record<string, unknown>,
-  where: Record<string, unknown>,
-  def: EntityDef,
-): boolean {
-  for (const [key, filterValue] of Object.entries(where)) {
-    if (filterValue === null || filterValue === undefined) continue;
-    // Filter values are always scalars from GraphQL input — safe to coerce.
-    const fv = filterValue as string | number | boolean | bigint;
+/** Translate the GraphQL `where` object ({field_op: value}) into StoreFilters. */
+function whereToFilters(where: Record<string, unknown>): StoreFilter[] {
+  const out: StoreFilter[] = [];
+  for (const [key, value] of Object.entries(where)) {
+    if (value === null || value === undefined) continue;
     const { field, op } = parseFilterKey(key);
-    const fieldType: FieldType = field === 'id' ? 'string' : (def[field]?.type ?? 'string');
-    const recordValue = record[field];
-    switch (op) {
-      case 'eq':
-        if (String(recordValue) !== String(fv)) return false;
-        break;
-      case 'not':
-        if (String(recordValue) === String(fv)) return false;
-        break;
-      case 'gt':
-        if (compareValues(recordValue, fv, fieldType) <= 0) return false;
-        break;
-      case 'lt':
-        if (compareValues(recordValue, fv, fieldType) >= 0) return false;
-        break;
-      case 'gte':
-        if (compareValues(recordValue, fv, fieldType) < 0) return false;
-        break;
-      case 'lte':
-        if (compareValues(recordValue, fv, fieldType) > 0) return false;
-        break;
-      case 'contains':
-        if (!String(recordValue).includes(String(fv))) return false;
-        break;
-      case 'starts_with':
-        if (!String(recordValue).startsWith(String(fv))) return false;
-        break;
-      case 'ends_with':
-        if (!String(recordValue).endsWith(String(fv))) return false;
-        break;
-    }
+    out.push({ field, op: op as FilterOp, value });
   }
-  return true;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,40 +460,30 @@ export function buildGraphQLSchema(
           after?:          string;
         },
       ) => {
-        let records = await store.list(entityName);
-
-        // Filter
-        if (where && Object.keys(where).length > 0) {
-          records = records.filter((r) => matchesFilter(r, where, def));
-        }
-
-        // Sort — stable: primary on orderBy field, secondary on id (tiebreaker)
-        if (orderBy) {
-          const dir = orderDirection === 'desc' ? -1 : 1;
-          const fieldType: FieldType = orderBy === 'id' ? 'string' : (def[orderBy]?.type ?? 'string');
-          records = [...records].sort((a, b) => {
-            const primary = dir * compareValues(a[orderBy], b[orderBy], fieldType);
-            if (primary !== 0) return primary;
-            return String(a['id']).localeCompare(String(b['id']));
-          });
-        }
-
-        const totalCount = records.length;
-
-        // Cursor — find the position of the `after` item, then slice past it
-        if (after) {
-          const cursorId = decodeCursor(after);
-          const idx = records.findIndex((r) => r['id'] === cursorId);
-          if (idx !== -1) records = records.slice(idx + 1);
-        }
-
+        // M17: push filter / order / keyset-paginate entirely into SQL — no
+        // whole-table load (closes the DoS of opidx-#42).
+        const dir: 'asc' | 'desc' = orderDirection === 'desc' ? 'desc' : 'asc';
+        const filters = where ? whereToFilters(where) : undefined;
         const cappedFirst = Math.min(Math.max(1, first), maxPageSize);
-        const hasNextPage = records.length > cappedFirst;
-        const page = records.slice(0, cappedFirst);
+        const orderField = orderBy ?? 'id';
+        const orderType: FieldType = orderField === 'id' ? 'string' : (def[orderField]?.type ?? 'string');
 
-        const endCursor = page.length > 0
-          ? encodeCursor(String(page[page.length - 1]['id']))
-          : null;
+        let cursor: { sortValue: unknown; id: string } | undefined;
+        if (after) {
+          const c = decodeCursor(after);
+          cursor = { id: c.i, sortValue: coerceCursorValue(c.s, orderType) };
+        }
+
+        // Fetch one extra row to decide hasNextPage without a second query.
+        const rows = await store.query(entityName, {
+          where: filters, orderBy, orderDirection: dir, cursor, limit: cappedFirst + 1,
+        });
+        const totalCount = await store.countWhere(entityName, filters);
+
+        const hasNextPage = rows.length > cappedFirst;
+        const page = rows.slice(0, cappedFirst);
+        const last = page[page.length - 1];
+        const endCursor = last ? encodeCursor(String(last['id']), String(last[orderField])) : null;
 
         return {
           nodes:      page.map((r) => serialiseRecord(r, def)),
