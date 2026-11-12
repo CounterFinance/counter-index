@@ -35,13 +35,15 @@
     "dogfood:evm": "tsx dogfood/evm-anvil.ts",
     "example:evm": "tsx examples/evm-portfolio/demo.ts",
     "dogfood:reorg": "tsx dogfood/evm-reorg.ts",
-    "bench": "tsx dogfood/bench.ts"
+    "bench": "tsx dogfood/bench.ts",
+    "coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^1.6.1",
     "eslint": "^9.39.4",
     "graphql-ws": "^6.0.8",
     "tsx": "^4.19.0",
@@ -59,8 +61,8 @@
   },
   "peerDependencies": {
     "graphql-ws": "^6.0.0",
-    "ws": "^8.0.0",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "ws": "^8.0.0"
   },
   "peerDependenciesMeta": {
     "graphql-ws": {
