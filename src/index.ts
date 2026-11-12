@@ -16,6 +16,10 @@ export { createIndexer, type Indexer, type IndexerConfig, type IndexerStats, typ
 export { createMultiIndexer, type MultiIndexer, type MultiIndexerConfig, type MultiSource } from './multiIndexer.js';
 export { type IndexerLogger, createLogger, noopLogger, type LoggerOptions, type LogLevel } from './logger.js';
 
+// --- Config loading + validation (M19) -------------------------------------
+
+export { loadConfig, ConfigError, type ConfigSchema, type ConfigField, type ConfigFieldType, type ConfigOf } from './config.js';
+
 // --- Operability (health, metrics, tracing, retry) — M18 -------------------
 
 export {

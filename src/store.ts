@@ -364,6 +364,36 @@ function notNullDefault(type: FieldType, dialect: 'sqlite' | 'postgres'): string
   }
 }
 
+/**
+ * Incremental migration (M19): add columns for schema fields that aren't in the
+ * existing table yet, so adding a field doesn't force a reset-from-genesis.
+ * Existing rows get the field's NOT NULL default (or NULL for optional fields).
+ * (Type changes + drops are intentionally NOT auto-applied — they're lossy.)
+ */
+async function migrateColumns(
+  adapter: MinimalDbAdapter,
+  table: string,
+  def: EntityDef,
+  dialect: 'sqlite' | 'postgres',
+): Promise<void> {
+  const existing = new Set<string>();
+  if (dialect === 'sqlite') {
+    const rows = await adapter.all<{ name: string }>(`PRAGMA table_info("${table}")`);
+    for (const r of rows) existing.add(r.name);
+  } else {
+    const rows = await adapter.all<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = $1`, [table],
+    );
+    for (const r of rows) existing.add(r.column_name);
+  }
+  for (const [field, fieldDef] of Object.entries(def)) {
+    if (existing.has(field)) continue;
+    const sqlType = fieldTypeSql(fieldDef.type, dialect);
+    const constraint = fieldDef.optional ? '' : ` ${notNullDefault(fieldDef.type, dialect)}`;
+    await adapter.exec(`ALTER TABLE ${table} ADD COLUMN ${col(field)} ${sqlType}${constraint}`);
+  }
+}
+
 function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres', multichain: boolean): string {
   const table = tableName(entity);
   // Multichain: the primary key is composite (chainId, id); `chainId` is an
@@ -420,6 +450,7 @@ export async function createStore(
     const def = schema.getEntity(name);
     await adapter.exec(buildCreateTable(name, def, dialect, multichain));
     const table = tableName(name);
+    await migrateColumns(adapter, table, def, dialect);   // M19: add new fields in place
     for (const [field, fieldDef] of Object.entries(def)) {
       // UNIQUE index for unique fields; a plain index for index:true + the hot
       // multichain chainId filter. (In multichain, uniqueness is scoped per chain.)
