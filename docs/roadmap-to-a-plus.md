@@ -106,18 +106,22 @@ round-trip is a full RTT.
 - [ ] Derived/computed fields.
 *Why:* real apps (DEX, lending) need relations and typed payloads.
 
-### M17 — Query power + API safety · P1 · ~2 days
-- [ ] **Push filter/sort/pagination into SQL (P0, verified gap).** Today the
-      GraphQL resolver calls `store.list(entity)` — **loading the entire table
-      into memory** — then applies `where`/`orderBy`/`first`/`after` in **JS**.
-      That doesn't scale and is a **DoS vector** (a query on a big table OOMs the
-      process). Translate the connection args into a **parameterised**
-      `WHERE … ORDER BY … LIMIT … (keyset) OFFSET` query (relies on M13 indexes).
-- [ ] Rich filter operators (`_gt`/`_lt`/`_in`/`_contains`, `AND`/`OR`).
-- [ ] **Cursor pagination stability** verified at scale (keyset, not offset).
-- [ ] First-class **time-series helpers** (OHLC candles, periodic snapshots) on
-      top of `onBlock`.
-- [ ] **GraphQL depth + complexity + row-cap limiting** (DoS protection).
+### M17 — Query power + API safety · P0 · **DONE** (opidx-#48, closes bug #42)
+- [x] **Push filter/sort/pagination into SQL (the P0 verified gap #42).**
+      `store.query` / `store.countWhere` compile the connection args into a
+      **parameterised** `WHERE … ORDER BY … LIMIT` (keyset) statement — no
+      whole-table load. Bench: **10 000× fewer rows loaded, ~154× faster**
+      (`npm run bench:query`). bigint range/order CAST to NUMERIC (exact on PG,
+      verified at uint256 scale). Field names schema-validated, never interpolated.
+- [x] Filter operators `_not/_gt/_lt/_gte/_lte/_contains/_starts_with/_ends_with/_in`.
+      (`AND`/`OR` nesting still TODO — current semantics are AND-of-predicates.)
+- [x] **Keyset cursor pagination** (`(sortValue, id) > cursor`), stable under
+      concurrent writes; a past-the-end cursor now returns empty (old code
+      wrongly returned page 1).
+- [ ] First-class **time-series helpers** (OHLC candles) — deferred to M16 (rich
+      schema); `onBlock` already supports hand-rolled candles.
+- [x] **Row-cap + depth limiting** (done in M22); **field-count complexity** cap
+      is the remaining safety item — deferred (depth + row-cap already bound cost).
 *Why:* the API is the product surface; it must be powerful, scalable *and* safe.
 
 ---
