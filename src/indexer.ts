@@ -56,6 +56,16 @@ export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   /** OpenTelemetry-shaped tracer hook (default: no-op). Emits a span per block. */
   tracer?: Tracer;
   /**
+   * Log a WARN when a single handler invocation exceeds this many ms — precise
+   * slow-handler attribution by event name (#34). Off by default.
+   */
+  slowHandlerMs?: number;
+  /**
+   * Observe handler errors (log/alert) WITHOUT changing control flow — the error
+   * still propagates and rolls the block back. Fires once per failed dispatch.
+   */
+  onError?: (err: unknown, event: ChainEvent) => void;
+  /**
    * Called when a reorg is detected that is deeper than `finalityDepth` (the
    * journal for those blocks was already pruned, so a correct rollback is
    * impossible). The indexer halts the live subscription and marks itself
@@ -102,6 +112,13 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
   onBlock(handler: BlockHandler<S>): void;
 
   /**
+   * Register a BEFORE-block middleware: fires once per block, before any of its
+   * event handlers, inside the block transaction (e.g. to seed per-block state or
+   * open a span). Symmetric with onBlock (which fires after).
+   */
+  beforeBlock(handler: BlockHandler<S>): void;
+
+  /**
    * Register a factory: when `eventName` fires, `extract` returns the address of a
    * newly-deployed child contract to start watching (or null/undefined to ignore).
    * The child is tracked, persisted (survives restart), and — when the source
@@ -146,6 +163,13 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
 
   /** Reset stats counters (does NOT drop DB tables). */
   resetStats(): void;
+
+  /**
+   * Per-event-name handler latency — precise perf attribution (#34). Returns
+   * `{ [eventName]: { calls, avgMs, sumMs } }` so you can see which handler is
+   * your bottleneck. Also surfaced on `/metrics`.
+   */
+  handlerStats(): Record<string, { calls: number; avgMs: number; sumMs: number }>;
 
   /**
    * Current operational health: state (`starting | backfilling | live |
@@ -216,6 +240,22 @@ export async function createIndexer<S extends SchemaDefinition>(
   // Operability (M18): health-state machine, handler-latency histogram, tracer.
   const lifecycle = new Lifecycle(config.lifecycle);
   const handlerLatency = new Histogram();
+  // Per-event-name latency (named-handler perf attribution, #34).
+  const handlerLatencyByName = new Map<string, Histogram>();
+  const perHandler = (name: string): Histogram => {
+    let h = handlerLatencyByName.get(name);
+    if (!h) { h = new Histogram(); handlerLatencyByName.set(name, h); }
+    return h;
+  };
+  const slowHandlerMs = config.slowHandlerMs ?? 0;
+  const computeHandlerStats = (): Record<string, { calls: number; avgMs: number; sumMs: number }> => {
+    const out: Record<string, { calls: number; avgMs: number; sumMs: number }> = {};
+    for (const [name, h] of handlerLatencyByName) {
+      const s = h.snapshot();
+      out[name] = { calls: s.count, sumMs: s.sum, avgMs: s.count > 0 ? s.sum / s.count : 0 };
+    }
+    return out;
+  };
   const tracer = config.tracer ?? noopTracer;
   const shutdownHooks: Array<() => void | Promise<void>> = [];
   let liveUnsub: UnsubscribeFn | undefined;   // set while subscribed
@@ -327,10 +367,15 @@ export async function createIndexer<S extends SchemaDefinition>(
     } catch (err) {
       stats.errors++;
       lifecycle.recordError();
-      throw err;   // propagate — the block transaction must roll back (M10)
+      config.onError?.(err, event);   // observe (log/alert) — does not swallow
+      throw err;                      // propagate — the block transaction must roll back (M10)
     }
     const dt = Date.now() - t0;
     handlerLatency.observe(dt);
+    perHandler(event.eventName).observe(dt);
+    if (slowHandlerMs > 0 && dt > slowHandlerMs) {
+      log.warn('handler', 'slow handler', { event: event.eventName, block: event.blockNumber, tx: event.txHash, elapsed_ms: dt });
+    }
     log.trace('handler', 'dispatched', {
       event:      event.eventName,
       block:      event.blockNumber,
@@ -362,6 +407,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       // and exactly-once (M10) are unchanged. A thrown block rolls back here and
       // the next beginBatch() resets the buffer.
       store.beginBatch();
+      await registry.dispatchBlockStart(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
       for (const event of events) await dispatch(event);
       await registry.dispatchBlock(makeBlockContext(blockNumber, blockTimestamp) as BlockContext);
       await store.flushBatch();
@@ -425,6 +471,10 @@ export async function createIndexer<S extends SchemaDefinition>(
 
     onBlock(handler) {
       registry.onBlock(handler as BlockHandler);
+    },
+
+    beforeBlock(handler) {
+      registry.beforeBlock(handler as BlockHandler);
     },
 
     onFactory(eventName, extract) {
@@ -667,6 +717,11 @@ export async function createIndexer<S extends SchemaDefinition>(
     resetStats() {
       stats = freshStats();
       handlerLatency.reset();
+      handlerLatencyByName.clear();
+    },
+
+    handlerStats() {
+      return computeHandlerStats();
     },
 
     health() {
@@ -704,6 +759,7 @@ export async function createIndexer<S extends SchemaDefinition>(
         ...stats,
         health: lifecycle.health(),
         handlerLatencyMs: handlerLatency.snapshot(),
+        handlersByEvent: computeHandlerStats(),
       });
       const serveOptions = { ...options, status: options?.status ?? defaultStatus };
       const { server, url } = startGraphQLServer(gqlSchema, serveOptions);

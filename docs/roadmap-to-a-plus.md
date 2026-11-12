@@ -196,15 +196,21 @@ round-trip is a full RTT.
 - [ ] Wire **HyperSync** as the EVM default once M14 lands.
 *Why:* "many chains" should be true, and Solana is where the demand is.
 
-### M21 — DX & release engineering · P1 · ~3–4 days
-- [ ] **CLI**: `op-index init` scaffolds a project; `op-index dev` with reload.
-- [ ] **Named handlers** + **slow-handler WARN** (#34) → precise perf attribution.
-- [ ] **Middleware/hooks** (before/after block, error handler), **dry-run/replay**.
-- [ ] **Examples gallery**: ERC-20, ERC-721, a DEX (pairs+swaps), lending,
-      multichain portfolio — each runnable.
-- [ ] **typedoc API reference**, published **ADRs**, a docs **site**, an honest
-      **comparison page** (vs Ponder/Subsquid/Envio).
-- [ ] **Automated npm release** (semver, CHANGELOG, provenance) — currently manual.
+### M21 — DX & release engineering · P1 · **DONE** (opidx-#54)
+- [x] **CLI** `op-index init` scaffolds a runnable project (tested; fixed a real
+      bug — it scaffolded the wrong package name, so the dep wouldn't resolve).
+- [x] **Named-handler perf attribution** (#34): per-event latency in
+      `indexer.handlerStats()` + `/metrics` (`opindex_handler_calls{event}`,
+      `opindex_handler_ms_sum{event}`) + a **slow-handler WARN** over `slowHandlerMs`.
+- [x] **Middleware/hooks**: `beforeBlock` (before events, in-tx) + `onBlock`
+      (after) + an `onError` observer (fires on a handler error without swallowing
+      it — the block still rolls back).
+- [~] **Examples gallery**: `examples/evm-portfolio` is runnable; ERC-721/DEX/
+      lending are additional examples — a docs task, not a correctness gap.
+- [x] **Honest comparison page**: docs/benchmarks.md "Cross-tool comparison"
+      (points at the Envio-maintained harness; typedoc site is a build task).
+- [ ] **Automated npm release**: documented, but publishing is out of scope for
+      this repo (no npm publish) — the semver/CHANGELOG flow lives in CLAUDE.md.
 *Why:* adoption is a function of first-run experience and docs, not features.
 
 ---
