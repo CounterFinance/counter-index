@@ -43,7 +43,8 @@
     "mutation": "stryker run",
     "bench:batch": "tsx dogfood/bench-batch.ts",
     "dogfood:ops": "tsx dogfood/ops.ts",
-    "bench:query": "tsx dogfood/bench-query.ts"
+    "bench:query": "tsx dogfood/bench-query.ts",
+    "soak": "node --expose-gc ./node_modules/.bin/tsx dogfood/soak.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
