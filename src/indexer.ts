@@ -23,6 +23,7 @@ import type { TypedStore } from './store.js';
 import { createStore, scopeStoreToChain } from './store.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
+import { isDynamicSource } from './source.js';
 import { HandlerRegistry, type EventHandler, type BlockHandler, type HandlerContext, type BlockContext } from './handler.js';
 import type { ChainEvent } from './types.js';
 import { buildGraphQLSchema, startGraphQLServer, startSubscriptionServer, type ServeOptions, type ServeHandle } from './graphql.js';
@@ -72,6 +73,15 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
    *   });
    */
   onBlock(handler: BlockHandler<S>): void;
+
+  /**
+   * Register a factory: when `eventName` fires, `extract` returns the address of a
+   * newly-deployed child contract to start watching (or null/undefined to ignore).
+   * The child is tracked, persisted (survives restart), and — when the source
+   * supports it — added to the source's watch set so its logs are fetched. Register
+   * handlers for the child's own events with `on()` as usual.
+   */
+  onFactory(eventName: string, extract: (event: ChainEvent) => string | null | undefined): void;
 
   /** Process a single decoded event through all matching handlers. */
   processEvent(event: ChainEvent): Promise<void>;
@@ -166,6 +176,47 @@ export async function createIndexer<S extends SchemaDefinition>(
   const finalityDepth = config.reorg?.finalityDepth ?? 0;
   if (reorgEnabled) store.enableReorg(finalityDepth);
 
+  // --- Factory / dynamic source tracking ---
+  const factoryIntType = config.sink.dialect === 'postgres' ? 'BIGINT' : 'INTEGER';
+  const trackedSources = new Set<string>();
+  let hasFactory = false;
+  let sourcesTableReady = false;
+  let sourcesLoaded = false;
+
+  async function ensureSourcesTable(): Promise<void> {
+    if (sourcesTableReady) return;
+    await config.sink.exec(
+      `CREATE TABLE IF NOT EXISTS opindex_sources (chain_id ${factoryIntType} NOT NULL, address TEXT NOT NULL, from_block ${factoryIntType}, PRIMARY KEY (chain_id, address))`,
+    );
+    sourcesTableReady = true;
+  }
+
+  async function addDiscovered(chainId: number, address: string, fromBlock: number): Promise<void> {
+    const addr = address.toLowerCase();
+    const key = `${chainId}:${addr}`;
+    if (trackedSources.has(key)) return;
+    trackedSources.add(key);
+    await ensureSourcesTable();
+    if (config.sink.dialect === 'sqlite') {
+      await config.sink.run(`INSERT OR IGNORE INTO opindex_sources (chain_id, address, from_block) VALUES (?, ?, ?)`, [chainId, addr, fromBlock]);
+    } else {
+      await config.sink.run(`INSERT INTO opindex_sources (chain_id, address, from_block) VALUES ($1, $2, $3) ON CONFLICT (chain_id, address) DO NOTHING`, [chainId, addr, fromBlock]);
+    }
+    if (config.source && isDynamicSource(config.source)) config.source.addAddress(addr);
+    log.info('indexer', 'factory child discovered', { chain: chainId, address: addr, from_block: fromBlock });
+  }
+
+  async function loadSourcesOnce(): Promise<void> {
+    if (!hasFactory || sourcesLoaded) return;
+    await ensureSourcesTable();
+    const rows = await config.sink.all<{ chain_id: number; address: string }>(`SELECT chain_id, address FROM opindex_sources`);
+    for (const r of rows) {
+      trackedSources.add(`${r.chain_id}:${r.address}`);
+      if (config.source && isDynamicSource(config.source)) config.source.addAddress(r.address);
+    }
+    sourcesLoaded = true;
+  }
+
   const scopedStore = (chainId: number): TypedStore<S> =>
     multichain ? (scopeStoreToChain(store, chainId) as unknown as TypedStore<S>) : typedStore;
 
@@ -255,6 +306,15 @@ export async function createIndexer<S extends SchemaDefinition>(
       registry.onBlock(handler as BlockHandler);
     },
 
+    onFactory(eventName, extract) {
+      hasFactory = true;
+      void ensureSourcesTable();
+      registry.on(eventName, (async (event: ChainEvent) => {
+        const addr = extract(event);
+        if (addr) await addDiscovered(event.chainId, addr, event.blockNumber);
+      }) as EventHandler);
+    },
+
     async processEvent(event) {
       await dispatch(event);
     },
@@ -288,6 +348,7 @@ export async function createIndexer<S extends SchemaDefinition>(
 
     async sync(fromBlock, toBlock, filters, knownTip) {
       const source = requireSource();
+      await loadSourcesOnce();
       const syncStart  = Date.now();
 
       // DEBUG: per-window framing. Consumers typically log an INFO
@@ -377,6 +438,7 @@ export async function createIndexer<S extends SchemaDefinition>(
 
     subscribe(fromBlock, options) {
       const source = requireSource();
+      void loadSourcesOnce();
       // Track block transitions so onBlock handlers fire after each block's events.
       // The last block in a poll batch fires when the next batch brings a new block number.
       let lastBlock     = -1;

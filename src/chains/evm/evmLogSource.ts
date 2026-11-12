@@ -10,7 +10,7 @@
 
 import { createPublicClient, http } from 'viem';
 import type { PublicClient, Abi, Log } from 'viem';
-import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
+import type { EventSource, EventSourceFilters, UnsubscribeFn, DynamicSource } from '../../source.js';
 import type { ChainEvent } from '../../types.js';
 import type { EvmChainMeta } from './types.js';
 import { EvmAbiDecoder } from './evmDecoder.js';
@@ -37,12 +37,13 @@ export interface EvmLogSourceOptions {
 const hexToBytes = (hex: string): Uint8Array =>
   new Uint8Array(Buffer.from(hex.startsWith('0x') ? hex.slice(2) : hex, 'hex'));
 
-export class EvmLogSource implements EventSource {
+export class EvmLogSource implements EventSource, DynamicSource {
   private readonly client: PublicClient;
   private readonly decoder: EvmAbiDecoder;
   private readonly chainId: number;
   private readonly network: string;
-  private readonly addresses?: `0x${string}`[];
+  /** Watched contract addresses (lowercased). Grows via addAddress (factories). */
+  private readonly addressSet: Set<string>;
   private readonly maxBlockRange: number;
   private readonly defaultPollMs: number;
 
@@ -54,7 +55,7 @@ export class EvmLogSource implements EventSource {
     this.decoder = new EvmAbiDecoder(options.abi);
     this.chainId = options.chainId;
     this.network = options.network;
-    this.addresses = options.addresses as `0x${string}`[] | undefined;
+    this.addressSet = new Set((options.addresses ?? []).map((a) => a.toLowerCase()));
     this.maxBlockRange = options.maxBlockRange ?? 2000;
     this.defaultPollMs = options.pollIntervalMs ?? 12_000;
   }
@@ -115,9 +116,14 @@ export class EvmLogSource implements EventSource {
     return () => { stopped = true; };
   }
 
+  /** Start watching an additional contract (e.g. a factory-discovered child). */
+  addAddress(address: string): void {
+    this.addressSet.add(address.toLowerCase());
+  }
+
   private resolveAddressFilter(filters?: EventSourceFilters): `0x${string}`[] | undefined {
     if (filters?.contract) return [filters.contract as `0x${string}`];
-    return this.addresses;
+    return this.addressSet.size > 0 ? ([...this.addressSet] as `0x${string}`[]) : undefined;
   }
 
   private toChainEvent(
