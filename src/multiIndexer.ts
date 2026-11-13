@@ -75,7 +75,7 @@ export async function createMultiIndexer<S extends SchemaDefinition>(
 ): Promise<MultiIndexer<S>> {
   if (!config.schema.multichain) {
     throw new Error(
-      '[op-index] createMultiIndexer requires a multichain schema — pass { multichain: true } to defineSchema().',
+      '[counter-index] createMultiIndexer requires a multichain schema — pass { multichain: true } to defineSchema().',
     );
   }
 
@@ -91,7 +91,7 @@ export async function createMultiIndexer<S extends SchemaDefinition>(
   const canParallelize = config.sources.length > 1 && config.sources.every((s) => s.sink !== undefined);
 
   const first = entries[0];
-  if (!first) throw new Error('[op-index] createMultiIndexer needs at least one source.');
+  if (!first) throw new Error('[counter-index] createMultiIndexer needs at least one source.');
 
   return {
     on(eventName, handler) {

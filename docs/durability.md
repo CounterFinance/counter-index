@@ -1,7 +1,7 @@
 # Durability & exactly-once (M10)
 
 ## Per-block atomicity
-A block is the unit of durability. For each block, op-index runs **one**
+A block is the unit of durability. For each block, counter-index runs **one**
 transaction (`commitBlock` in `src/indexer.ts`) containing, in order:
 
 1. every event handler's writes for that block,

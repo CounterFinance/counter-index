@@ -1,4 +1,4 @@
-# Operating op-index in production
+# Operating counter-index in production
 
 What an on-call engineer needs at 3am: *is it alive, how far behind is it, why is
 it slow, and can I restart it without corrupting state.* This is M18.
@@ -83,12 +83,12 @@ cost you the *current* block, which is simply re-fetched and re-applied on resta
 
 ## Tracing (OpenTelemetry-shaped hook)
 
-op-index does **not** bundle the OpenTelemetry SDK — a library shouldn't force a
+counter-index does **not** bundle the OpenTelemetry SDK — a library shouldn't force a
 tracing backend on its host. Instead it emits one span per block through a small
 `Tracer` interface you can point anywhere:
 
 ```ts
-import { jsonTracer } from '@opnet-collective/op-index';
+import { jsonTracer } from '@counterfinance/counter-index';
 
 // Local dogfooding — one JSON line per block span:
 await createIndexer({ schema, sink, source, tracer: jsonTracer((line) => logger.info(line)) });
@@ -99,7 +99,7 @@ Bridging to a real collector is a ~10-line shim — wrap your OTel tracer so
 
 ```ts
 import { trace } from '@opentelemetry/api';
-const otel = trace.getTracer('op-index');
+const otel = trace.getTracer('counter-index');
 const tracer = {
   startSpan(name, attrs = {}) {
     const span = otel.startSpan(name, { attributes: attrs });

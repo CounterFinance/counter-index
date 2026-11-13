@@ -1,6 +1,6 @@
-# Contributing to op-index
+# Contributing to counter-index
 
-Thanks for your interest. op-index is an MIT-licensed indexer framework for OPNET — contributions
+Thanks for your interest. counter-index is an MIT-licensed indexer framework for OPNET — contributions
 that improve correctness, performance, documentation, or developer experience are welcome.
 
 ## Before you start
@@ -14,8 +14,8 @@ that improve correctness, performance, documentation, or developer experience ar
 Node.js 22+ required.
 
 ```bash
-git clone https://github.com/opnet-collective/op-index
-cd op-index
+git clone https://github.com/CounterFinance/counter-index
+cd counter-index
 npm install
 ```
 
@@ -53,7 +53,7 @@ register it in `DECODER_REGISTRY`, and add a test in `tests/decoders.test.ts`.
 
 ## Tests
 
-Every new behaviour needs a test. op-index targets 100% branch coverage on public API paths.
+Every new behaviour needs a test. counter-index targets 100% branch coverage on public API paths.
 
 - Unit tests go in `tests/<subject>.test.ts`
 - Use the `createTestAdapter()` helper from `src/adapter.ts` for an in-memory SQLite sink
@@ -69,6 +69,6 @@ Every new behaviour needs a test. op-index targets 100% branch coverage on publi
 
 ## What we are not looking for
 
-- Runtime dependency additions — op-index is intentionally lean
+- Runtime dependency additions — counter-index is intentionally lean
 - Breaking changes to `defineSchema`, `createIndexer`, or store CRUD without a compelling reason
 - Features specific to a single contract or protocol (use `registerDecoder()` in your own indexer instead)

@@ -39,7 +39,7 @@ export class SolanaDecoder implements Decoder {
   constructor(events: SolanaEventDef[]) {
     for (const ev of events) {
       const disc = ev.discriminator ?? anchorEventDiscriminator(ev.name);
-      if (disc.length !== 8) throw new Error(`[op-index] Solana discriminator for "${ev.name}" must be 8 bytes`);
+      if (disc.length !== 8) throw new Error(`[counter-index] Solana discriminator for "${ev.name}" must be 8 bytes`);
       this.byDisc.set(hex(disc), ev);
     }
   }

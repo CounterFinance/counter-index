@@ -236,7 +236,7 @@ export class DbEventSource implements EventSource {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[op-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
+        console.warn(`[counter-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
       }
       if (!stopped) {
         setTimeout(() => { void poll(); }, intervalMs);

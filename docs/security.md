@@ -1,7 +1,7 @@
 # Security
 
 ## Threat model
-op-index serves a public GraphQL API over indexed data. The attack surface is the
+counter-index serves a public GraphQL API over indexed data. The attack surface is the
 HTTP server (`indexer.serve`) and the decoders (adversarial on-chain bytes). We do
 **not** accept writes from the network — indexing input comes from a trusted
 source adapter.

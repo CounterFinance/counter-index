@@ -1,4 +1,4 @@
-# op-index — Claude Code Instructions
+# counter-index — Claude Code Instructions
 
 ## Git workflow
 
@@ -41,7 +41,7 @@ Semver guide for this project:
 
 ## Package architecture
 
-op-index is a **published npm library** (`@opnet-collective/op-index`). The public API is everything exported from `src/index.ts`. Breaking changes to exported types or interfaces require a major version bump.
+counter-index is a **published npm library** (`@counterfinance/counter-index`). The public API is everything exported from `src/index.ts`. Breaking changes to exported types or interfaces require a major version bump.
 
 Key concepts:
 - **Event sources**: `DbEventSource`, `WsEventSource`, `RpcEventSource` — pluggable data providers

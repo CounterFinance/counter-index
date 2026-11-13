@@ -5,11 +5,11 @@ subscribes to new ones, and serves a GraphQL API your frontend can query.
 
 ## 1. Define your schema
 
-Everything starts with `defineSchema`. Declare the entities you want to index — op-index creates
+Everything starts with `defineSchema`. Declare the entities you want to index — counter-index creates
 one SQL table per entity in your sink database, prefixed `opindex_` to avoid collisions.
 
 ```ts
-import { defineSchema } from '@opnet-collective/op-index';
+import { defineSchema } from '@counterfinance/counter-index';
 
 const schema = defineSchema({
   Account: {
@@ -32,11 +32,11 @@ See [Schema](./schema.md) for all field types and options.
 
 ## 2. Open source and sink connections
 
-**Source** — where op-index reads raw chain events from.
-**Sink** — where op-index writes your derived `opindex_*` tables.
+**Source** — where counter-index reads raw chain events from.
+**Sink** — where counter-index writes your derived `opindex_*` tables.
 
 ```ts
-import { DbEventSource, openSqlite } from '@opnet-collective/op-index';
+import { DbEventSource, openSqlite } from '@counterfinance/counter-index';
 
 // Fast path — OpStream-ready database (recommended for production)
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
@@ -46,7 +46,7 @@ const sink   = openSqlite('/data/opindex.db');
 No OpStream? Use the RPC source instead:
 
 ```ts
-import { RpcEventSource } from '@opnet-collective/op-index';
+import { RpcEventSource } from '@counterfinance/counter-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = new RpcEventSource(
@@ -55,10 +55,10 @@ const source = new RpcEventSource(
 );
 ```
 
-Or let op-index probe and decide automatically:
+Or let counter-index probe and decide automatically:
 
 ```ts
-import { createEventSource } from '@opnet-collective/op-index';
+import { createEventSource } from '@counterfinance/counter-index';
 
 const source = await createEventSource({
   db:  '/data/opstream.db',                              // fast if present
@@ -74,14 +74,14 @@ See [Sources](./sources.md) for Postgres, custom adapters, and the full options 
 and is a no-op on subsequent runs.
 
 ```ts
-import { createIndexer } from '@opnet-collective/op-index';
+import { createIndexer } from '@counterfinance/counter-index';
 
 const indexer = await createIndexer({ schema, sink, source });
 ```
 
 ## 4. Register handlers
 
-Handlers are async functions that fire when a specific event name is seen. op-index calls them in
+Handlers are async functions that fire when a specific event name is seen. counter-index calls them in
 the order they were registered, awaiting each one before moving to the next.
 
 ```ts
@@ -111,7 +111,7 @@ Use `'*'` to catch every event regardless of name:
 
 ```ts
 indexer.on('*', async (event, ctx) => {
-  // fires for every event op-index sees
+  // fires for every event counter-index sees
 });
 ```
 
@@ -228,7 +228,7 @@ See [Store](./store.md) for the full API.
 import {
   defineSchema, createIndexer,
   DbEventSource, openSqlite,
-} from '@opnet-collective/op-index';
+} from '@counterfinance/counter-index';
 
 const schema = defineSchema({
   Account: {

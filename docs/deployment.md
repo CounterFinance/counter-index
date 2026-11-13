@@ -1,16 +1,16 @@
 # Deployment
 
-op-index is a library — it has no entry point of its own. You deploy *your indexer app*, which
-imports op-index and wires everything together. This guide covers the recommended way to do that
+counter-index is a library — it has no entry point of its own. You deploy *your indexer app*, which
+imports counter-index and wires everything together. This guide covers the recommended way to do that
 with Docker and docker-compose.
 
 ## Project layout
 
-The recommended layout for a project built on op-index:
+The recommended layout for a project built on counter-index:
 
 ```
 opnet-collective/
-  op-index/               ← op-index library (this repo)
+  counter-index/               ← counter-index library (this repo)
   my-indexer/             ← your indexer app
     src/
       main.ts             ← entry point (~50 lines)
@@ -18,16 +18,16 @@ opnet-collective/
         transfers.ts      ← your event handlers
     Dockerfile
     docker-compose.yml
-    package.json          ← "@opnet-collective/op-index": "^0.1.0"
+    package.json          ← "@counterfinance/counter-index": "^0.1.0"
     tsconfig.json
 ```
 
 ## Scaffold a new indexer
 
-The fastest way to start is `npx @opnet-collective/op-index init`:
+The fastest way to start is `npx @counterfinance/counter-index init`:
 
 ```bash
-npx @opnet-collective/op-index init my-indexer
+npx @counterfinance/counter-index init my-indexer
 # Creates my-indexer/ in the current directory with:
 #   package.json, tsconfig.json, .gitignore, .env.example
 #   src/main.ts, src/handlers/transfers.ts
@@ -37,17 +37,17 @@ cd my-indexer && npm install && npm run dev
 
 No monorepo required — works anywhere Node ≥ 24 and npx are available.
 
-If you are working inside the op-index monorepo, the `just scaffold` command does the same thing:
+If you are working inside the counter-index monorepo, the `just scaffold` command does the same thing:
 
 ```bash
-cd op-index
+cd counter-index
 just scaffold my-indexer
 # Creates ../my-indexer/ — identical output
 ```
 
 ## Dockerfile
 
-op-index ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript and builds native
+counter-index ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript and builds native
 modules; stage 2 runs only the compiled output — no build tools or TypeScript compiler in
 production.
 
@@ -95,7 +95,7 @@ dist/
 
 ## docker-compose.yml
 
-op-index's `docker-compose.yml` wires OpStream and your indexer together on a shared volume:
+counter-index's `docker-compose.yml` wires OpStream and your indexer together on a shared volume:
 
 ```yaml
 services:
@@ -106,7 +106,7 @@ services:
     environment:
       - OPSTREAM_DB_PATH=/data/opstream.db
 
-  op-index-indexer:
+  counter-index-indexer:
     build:
       context: .
       dockerfile: Dockerfile
@@ -146,7 +146,7 @@ volumes:
 
 ## justfile commands
 
-If you have [just](https://github.com/casey/just) installed, op-index's `justfile` covers the full
+If you have [just](https://github.com/casey/just) installed, counter-index's `justfile` covers the full
 development lifecycle:
 
 ```bash
@@ -184,7 +184,7 @@ const PORT        = Number(process.env['PORT']        ?? '4000');
 - **Separate source and sink databases** — OpStream writes to `opstream.db` continuously;
   keeping `opindex.db` separate prevents write contention.
 - **Run behind a reverse proxy** — nginx, Caddy, or Cloudflare in front of port 4000 gives you
-  TLS, rate limiting, and origin-restricted CORS without changing op-index's configuration.
+  TLS, rate limiting, and origin-restricted CORS without changing counter-index's configuration.
 - **Mount volumes on fast storage** — SQLite is extremely fast on SSDs; avoid network-attached
   storage for the database files.
 - **Handle `SIGTERM` cleanly** — call `stop()` on your subscribe handle and the GraphQL server
@@ -201,7 +201,7 @@ process.on('SIGTERM', async () => {
 ## Development without Docker
 
 ```bash
-cd op-index
+cd counter-index
 npm install
 npm test              # run all tests
 npm run test:watch    # watch mode

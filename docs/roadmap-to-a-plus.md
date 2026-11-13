@@ -1,6 +1,6 @@
 # Roadmap to A+
 
-Where op-index is today (self-assessed **A−**): a chain-neutral core proven by a
+Where counter-index is today (self-assessed **A−**): a chain-neutral core proven by a
 zero-core-edit EVM adapter, journalled reorg handling verified on a live node,
 multichain with a real composite key, a typed store, `/metrics` + `/health`, a
 pino-grade logger, and **live-mainnet indexing** — 266 tests, 86.5%/82.4%
@@ -213,7 +213,7 @@ round-trip is a full RTT.
 > part the fixtures exercise directly.
 
 ### M21 — DX & release engineering · P1 · **DONE** (opidx-#54)
-- [x] **CLI** `op-index init` scaffolds a runnable project (tested; fixed a real
+- [x] **CLI** `counter-index init` scaffolds a runnable project (tested; fixed a real
       bug — it scaffolded the wrong package name, so the dep wouldn't resolve).
 - [x] **Named-handler perf attribution** (#34): per-event latency in
       `indexer.handlerStats()` + `/metrics` (`opindex_handler_calls{event}`,

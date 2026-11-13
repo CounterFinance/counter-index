@@ -1,5 +1,5 @@
 {
-  "name": "@opnet-collective/op-index",
+  "name": "@counterfinance/counter-index",
   "version": "0.1.12-alpha.3",
   "description": "Indexer framework for OPNET — define schemas, handle events, query indexed chain data",
   "license": "MIT",
@@ -8,7 +8,7 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "op-index": "bin/op-index.js"
+    "counter-index": "bin/counter-index.js"
   },
   "exports": {
     ".": {

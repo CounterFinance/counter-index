@@ -1,4 +1,4 @@
-# Reference production image for an op-index indexer (M19).
+# Reference production image for an counter-index indexer (M19).
 # Multi-stage, non-root, dumb-init for correct signal handling (so SIGTERM
 # reaches the process and triggers indexer.installSignalHandlers() -> graceful
 # shutdown). Copy this into your indexer app and adjust the entrypoint.

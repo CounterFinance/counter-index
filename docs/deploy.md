@@ -1,6 +1,6 @@
-# Deploying op-index
+# Deploying counter-index
 
-op-index is a library you embed in your own indexer process. This is how to run
+counter-index is a library you embed in your own indexer process. This is how to run
 that process in production. See also [operations.md](./operations.md) (health,
 metrics, shutdown) and [durability.md](./durability.md) (atomicity, reorgs).
 
@@ -11,7 +11,7 @@ defaults, and reports **every** problem at once so a bad deploy dies at startup,
 not an hour into a backfill:
 
 ```ts
-import { loadConfig } from '@opnet-collective/op-index';
+import { loadConfig } from '@counterfinance/counter-index';
 
 const cfg = loadConfig({
   databaseUrl: { type: 'url',     required: true, description: 'Postgres DSN' },
@@ -68,7 +68,7 @@ terminationGracePeriodSeconds: 60
 
 ## Horizontal scaling
 
-op-index scales by **partitioning writers**, not by replicating one. Each chain
+counter-index scales by **partitioning writers**, not by replicating one. Each chain
 (or each disjoint contract set) is its own single-writer process with its own
 per-chain checkpoint — never two writers on the same `(chainId, entity)` range, or
 they race the checkpoint. Read scaling is separate: the GraphQL API is stateless,
@@ -79,7 +79,7 @@ behind a load balancer. For multichain, `createMultiIndexer` with a dedicated
 ## Schema migrations
 
 Adding a field to your schema is applied **in place** on startup (`ALTER TABLE ADD
-COLUMN`, existing rows get the field's default) — no reset-from-genesis. op-index
+COLUMN`, existing rows get the field's default) — no reset-from-genesis. counter-index
 does **not** auto-apply lossy changes (type changes, drops, renames); do those as
 a deliberate migration + re-index of the affected entity.
 

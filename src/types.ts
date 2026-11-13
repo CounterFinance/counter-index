@@ -1,5 +1,5 @@
 /**
- * Core types for the op-index indexer framework.
+ * Core types for the counter-index indexer framework.
  *
  * `ChainEvent` is the single, chain-neutral input to the indexer. Every source
  * adapter produces exactly this shape. The core engine (indexer, store, graphql,

@@ -1,6 +1,6 @@
 # Store
 
-The store is op-index's async CRUD interface over your `opindex_*` tables. You access it inside
+The store is counter-index's async CRUD interface over your `opindex_*` tables. You access it inside
 handlers via `ctx.store`, or from outside the handler pipeline via `indexer.store`. It abstracts
 over SQLite and Postgres — the same API works for both.
 
@@ -24,7 +24,7 @@ await ctx.store.set('Pool', contractAddress, {
 ```
 
 `id` is always a `string`. Choose something stable and unique — contract address, transaction
-hash, composite key, etc. op-index does not generate ids for you.
+hash, composite key, etc. counter-index does not generate ids for you.
 
 ### `store.get(entity, id)`
 

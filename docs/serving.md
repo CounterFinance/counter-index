@@ -1,6 +1,6 @@
 # Serving-scale read path
 
-GraphQL is op-index's default read API, but GraphQL-over-POST can't be cached by
+GraphQL is counter-index's default read API, but GraphQL-over-POST can't be cached by
 a CDN (POST is never cached) and needs a WebSocket for live data. For a
 read-heavy indexer behind an edge cache, that's the scaling cliff. `serve()` can
 mount three extra read surfaces — all on the **same SQL pushdown and keyset

@@ -13,7 +13,7 @@ import { hostname as osHostname } from 'node:os';
  *           per-handler invocation timing              (1000+ / sec)
  *
  * Consumers implement this interface and choose which levels they route
- * through. op-index never decides the output medium — ecosystem/CLI/etc.
+ * through. counter-index never decides the output medium — ecosystem/CLI/etc.
  * plug in their own sink.
  */
 export interface IndexerLogger {

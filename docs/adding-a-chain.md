@@ -1,6 +1,6 @@
 # Adding a new chain
 
-op-index's core is chain-neutral: the indexer, store, schema, typed store and
+counter-index's core is chain-neutral: the indexer, store, schema, typed store and
 GraphQL never know which chain they're on. A new chain is an **adapter** under
 `src/chains/<chain>/` that produces `ChainEvent`s — the core doesn't change. (EVM
 was added this way with zero core edits; use it as the reference.)
