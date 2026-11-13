@@ -1,6 +1,6 @@
 {
   "name": "@counterfinance/counter-index",
-  "version": "0.1.12-alpha.3",
+  "version": "0.2.0",
   "description": "Chain-neutral blockchain indexer framework: define a schema, handle events, query indexed data over GraphQL, REST, SQL-over-HTTP, and SSE. EVM-first, multi-chain, zero-codegen.",
   "license": "MIT",
   "type": "module",
