@@ -1,12 +1,59 @@
 # Sources
 
-An EventSource is what counter-index reads raw chain events from. It is completely decoupled from the
-sink (where counter-index writes your indexed tables), they can be different databases, different
-servers, or different technologies entirely.
+An EventSource is what counter-index reads raw chain events from. It is completely decoupled from
+the sink (where counter-index writes your indexed tables): they can be different databases,
+different servers, or different technologies entirely.
 
-counter-index ships two source implementations and a smart factory that picks the best one available.
+counter-index ships source adapters for three chains, EVM-first:
 
-## Comparison
+- **EVM** (`EvmLogSource`): `eth_getLogs` against any JSON-RPC node, decoded with a viem ABI.
+- **Solana** (`SolanaLogSource`): Anchor-style program events, decoded with a dependency-free
+  Borsh codec.
+- **OPNET** (`DbEventSource` / `WsEventSource` / `RpcEventSource`): over an OpStream-ready
+  database, an OpStream WebSocket, or any OPNET RPC node, with a capability-probing factory.
+
+Adding a fourth is about two classes (a decoder and an EventSource) and touches no core code, see
+[Adding a chain](./adding-a-chain.md).
+
+---
+
+## EVM (`EvmLogSource`)
+
+Reads logs from any JSON-RPC node via `eth_getLogs` and decodes them against a viem ABI. Decoded
+arguments arrive already typed (a `uint256` is a `bigint`, an `address` a `string`).
+
+```ts
+import { EvmLogSource } from '@counterfinance/counter-index';
+import { createPublicClient, http, parseAbi } from 'viem';
+import { mainnet } from 'viem/chains';
+
+const abi = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+const client = createPublicClient({ chain: mainnet, transport: http(process.env.RPC_URL) });
+
+const source = new EvmLogSource({
+  chainId:   mainnet.id,
+  network:   'ethereum',
+  abi,
+  client,
+  addresses: ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'], // optional: restrict to these contracts
+});
+```
+
+Works against any EVM chain: pass the matching viem `chain` and its `chainId`. `viem` is an
+optional peer dependency, installed only if you use this adapter.
+
+## Solana (`SolanaLogSource`)
+
+Decodes Anchor program events (an 8-byte `sha256("event:"+Name)` discriminator plus a Borsh
+payload) from transaction logs, with no Solana SDK dependency. Declare your event layouts and
+point it at a slot fetcher; see `dogfood/solana.ts` for a worked example and
+[Adding a chain](./adding-a-chain.md) for the decoder details.
+
+---
+
+## OPNET sources
+
+OPNET ships three interchangeable sources plus a factory that picks the fastest one available.
 
 | | `DbEventSource` | `WsEventSource` | `RpcEventSource` |
 |---|---|---|---|
@@ -16,9 +63,7 @@ counter-index ships two source implementations and a smart factory that picks th
 | Context richness | Full, tx fields + block JOINs | Full, 15-field enriched payload | Full, RPC tx fields |
 | Best for | Production, full-history backfills | Low-latency live indexers | Lightweight indexers, no OpStream |
 
----
-
-## DbEventSource
+### DbEventSource
 
 Reads from an [OpStream](https://github.com/opnet-collective/opstream)-ready database. OpStream
 pre-indexes all OPNET blocks, transactions, and events into a structured schema, `DbEventSource`
@@ -56,7 +101,7 @@ collisions with OpStream's raw tables.
 
 ---
 
-## WsEventSource
+### WsEventSource
 
 Connects to OpStream's WebSocket broadcast server. Events arrive fully enriched, all 15 fields
 populated, with sub-second latency. No DB reads, no RPC calls.
@@ -131,7 +176,7 @@ const source = await createEventSource({
 
 ---
 
-## RpcEventSource
+### RpcEventSource
 
 Talks directly to any OPNET RPC node. No OpStream installation required, point it at a public
 endpoint and you're indexing immediately.
@@ -186,7 +231,7 @@ Any object that satisfies this shape works, no class inheritance required.
 
 ---
 
-## createEventSource, capability-probing factory
+### createEventSource, capability-probing factory
 
 Give `createEventSource` whatever you have. It probes for the fastest available engine and falls
 back automatically.
