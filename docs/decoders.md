@@ -50,13 +50,13 @@ registerDecoder('MyCustomEvent', (rawBytes: Uint8Array) => {
   const address = '0x' + Buffer.from(addrBytes).toString('hex');
 
   return {
-    amount: amount.toString(), // return as decimal string — consistent with built-ins
+    amount: amount.toString(), // return as decimal string, consistent with built-ins
     address,
   };
 });
 ```
 
-Return `null` if the bytes are malformed or too short — counter-index will set `event.decoded = null`
+Return `null` if the bytes are malformed or too short, counter-index will set `event.decoded = null`
 and continue processing.
 
 `registerDecoder` is global and takes effect immediately. Call it once at startup, before
@@ -80,7 +80,7 @@ and check `event.decoded`:
 ```ts
 indexer.on('*', async (event) => {
   if (!event.decoded) {
-    // Unknown event — raw bytes available in event.eventRaw
+    // Unknown event, raw bytes available in event.eventRaw
     console.log(`Unknown event: ${event.eventName} (${event.dataLength} bytes)`);
   }
 });
@@ -88,7 +88,7 @@ indexer.on('*', async (event) => {
 
 ## Binary format reference
 
-OPNET events follow a big-endian ABI similar to Ethereum's — each value is padded to 32 bytes.
+OPNET events follow a big-endian ABI similar to Ethereum's, each value is padded to 32 bytes.
 Reading the raw bytes:
 
 ```ts

@@ -3,10 +3,10 @@
 Where counter-index is today (self-assessed **A−**): a chain-neutral core proven by a
 zero-core-edit EVM adapter, journalled reorg handling verified on a live node,
 multichain with a real composite key, a typed store, `/metrics` + `/health`, a
-pino-grade logger, and **live-mainnet indexing** — 266 tests, 86.5%/82.4%
+pino-grade logger, and **live-mainnet indexing**: 266 tests, 86.5%/82.4%
 coverage, clean git history.
 
-What separates **A−** from **A+** is not more features — it's **trust, speed, and
+What separates **A−** from **A+** is not more features, it's **trust, speed, and
 operability at production scale**, plus the polish that makes people *adopt* it.
 This document lists every milestone to get there, continuing the M-series
 (M1–M9 shipped). Each item: **priority** (P0 = blocks "production-grade", P1 =
@@ -19,12 +19,12 @@ strongly expected, P2 = differentiator), rough **effort**, and *why it matters*.
 
 ---
 
-## Phase A — Correctness & trust (an A+ indexer is *trusted*)
+## Phase A, Correctness & trust (an A+ indexer is *trusted*)
 
-### M10 — Per-block atomicity + crash safety  · P0 · ~1–2 days
+### M10, Per-block atomicity + crash safety  · P0 · ~1–2 days
 Today a block's **entity writes auto-commit per `store.set`**, and only
 `onBlock` + the checkpoint are wrapped in a transaction. A crash mid-block can
-leave partial entity state with the checkpoint not advanced — correctness relies
+leave partial entity state with the checkpoint not advanced, correctness relies
 on idempotent re-processing, not atomicity.
 - [ ] Wrap **all** of a block's entity writes + `onBlock` + checkpoint in **one**
       `sink.transaction` so a block is all-or-nothing.
@@ -33,12 +33,12 @@ on idempotent re-processing, not atomicity.
 - [ ] Document the exactly-once / idempotency guarantee precisely.
 *Why:* this is the difference between "probably correct" and "provably durable."
 
-### M11 — Reorg hardening · P0 · **DONE** (opidx-#49)
+### M11, Reorg hardening · P0 · **DONE** (opidx-#49)
 Reorg handling was live-verified for shallow cases; M11 makes failures safe.
 - [x] **Atomic rollback**: journal replay + cleanup + checkpoint rewind in ONE
-      transaction. **Crash during rollback → restart → consistent** — proven by a
+      transaction. **Crash during rollback → restart → consistent**: proven by a
       fault-injection test (mid-rollback failure fully rolls back; retry succeeds).
-- [x] **Deep reorg beyond finalityDepth: detect, stop, alert** — store-level
+- [x] **Deep reorg beyond finalityDepth: detect, stop, alert**: store-level
       `DeepReorgError` (rollback below the pruned finality floor) **and** a live
       boundary-continuity check (canonical boundary block must build on the
       retained hash) that halts the subscription + calls `onDeepReorg` instead of
@@ -51,9 +51,9 @@ Reorg handling was live-verified for shallow cases; M11 makes failures safe.
       `npm run dogfood:reorg` chain-verifies rollback+recovery on real anvil.
 *Why:* reorgs are where indexers silently corrupt. A+ means proven, not hoped.
 
-### M12 — Test rigor (kill the "lying tests" risk for real) · P0 · ~2 days
+### M12, Test rigor (kill the "lying tests" risk for real) · P0 · ~2 days
 - [ ] **Stryker mutation testing** configured; kill surviving mutants on core
-      logic (store, reorg journal, decoders) with better assertions — so a wrong
+      logic (store, reorg journal, decoders) with better assertions, so a wrong
       result *always* fails a test.
 - [ ] **Property/fuzz tests** (fast-check): decoder ABI round-trips + malformed
       input (never throws), block-range splitting, balance-accumulation invariants.
@@ -65,92 +65,92 @@ Reorg handling was live-verified for shallow cases; M11 makes failures safe.
 
 ---
 
-## Phase B — Performance (an A+ indexer is *fast*)
+## Phase B, Performance (an A+ indexer is *fast*)
 
-### M13 — Write throughput · P0 · **DONE** (opidx-#46)
+### M13, Write throughput · P0 · **DONE** (opidx-#46)
 Was one SQL round-trip per `store.set`.
 - [x] **Bulk per-block buffered writes**: `beginBatch`/`flushBatch` bracket each
       block's writes inside `commitBlock`'s transaction and flush as chunked
-      multi-row `INSERT … ON CONFLICT` per table. **Read-your-writes** — `get`
+      multi-row `INSERT ... ON CONFLICT` per table. **Read-your-writes**: `get`
       reads the buffer first, so the balance pattern works mid-block. Bench:
       **6000 → 2 write round-trips** for a 2000-transfer block (`npm run bench:batch`),
       batched final state ≡ unbatched, crash dogfood still green.
 - [x] **Secondary indexes from the schema**: `{ type, index: true }` →
       `CREATE INDEX`; multichain auto-indexes `chainId`. (Query paths start
-      *using* them at M17 SQL pushdown — until then every read still scans; this
+      *using* them at M17 SQL pushdown, until then every read still scans; this
       milestone lays the index + the batched write path.)
-- [ ] Prepared-statement reuse / caching on the hot path — deferred; the
+- [ ] Prepared-statement reuse / caching on the hot path, deferred; the
       round-trip count, not statement prep, dominated (see bench). Tracked under #34.
-*Why:* batching is what makes Postgres-over-network viable — each avoided
+*Why:* batching is what makes Postgres-over-network viable, each avoided
 round-trip is a full RTT.
 
-### M14 — Backfill speed · P1 · **DONE** (opidx-#50; HyperSync stays #18)
+### M14, Backfill speed · P1 · **DONE** (opidx-#50; HyperSync stays #18)
 - [x] **Ordered-parallel chunk fetching** (`EvmLogSource.concurrency`): N
       `eth_getLogs` in flight, yielded in block order. 240 ms → 40 ms at
       concurrency 6 in the test harness; live anvil backfill still exact.
 - [x] **Per-chain connections** → `createMultiIndexer.syncAll()` runs chains in
       **parallel** when each `MultiSource` has its own `sink` (shared connection
-      stays sequential — SQLite can't run concurrent txns). ~2×D → ~1×D for 2 chains.
+      stays sequential, SQLite can't run concurrent txns). ~2×D → ~1×D for 2 chains.
 - [ ] **HyperSync source** (`@envio-dev/hypersync-client`): needs a network
       endpoint + token, so it stays gated behind **opidx-#18** (not bundled).
-- [ ] **Postgres `sql.cursor()` streaming** for very large ranges — deferred;
+- [ ] **Postgres `sql.cursor()` streaming** for very large ranges, deferred;
       `store.query` already bounds result sets with LIMIT, so the OOM risk is gone.
 *Why:* backfill time is the first thing a user measures.
 
-### M15 — Benchmarked & proven · P1 · **DONE** (opidx-#51)
+### M15, Benchmarked & proven · P1 · **DONE** (opidx-#51)
 - [x] **Soak / leak test** (`npm run soak` + `tests/soak.test.ts`): 300k events,
-      heap plateaus (19→24→22→27 MB — bounded, no per-event leak), ~234k ev/s,
+      heap plateaus (19→24→22→27 MB, bounded, no per-event leak), ~234k ev/s,
       health `live`, lag 0; the test asserts balances match an independent tally
       at scale. Documented in docs/benchmarks.md.
 - [~] **enviodev/open-indexer-benchmark** cross-tool numbers: the adapter approach
       is documented (docs/benchmarks.md "Cross-tool comparison"), but publishing
-      numbers to an external leaderboard is out of scope for this repo — run it on
+      numbers to an external leaderboard is out of scope for this repo, run it on
       your own workload. (Not posting benchmark numbers outside this repo.)
 *Why:* credible numbers beat claims; soak tests find leaks.
 
 ---
 
-## Phase C — Data model & query power
+## Phase C, Data model & query power
 
-### M16 — Rich schema · P1 · **DONE** (opidx-#52)
+### M16, Rich schema · P1 · **DONE** (opidx-#52)
 - [x] **Entity relationships** with **nested GraphQL resolution**:
       `{ type: 'string', ref: 'Pool' }` → `swap.pool { token0 }` resolved on
       demand (scoped per chain), dangling refs → null, filter by the ref id.
       Built via lazy field thunks so entities can reference one another.
 - [x] **`index` + `unique`** constraints in `defineSchema` (`unique` → a real
-      UNIQUE index that **rejects** duplicates — the upsert now conflicts on the
+      UNIQUE index that **rejects** duplicates, the upsert now conflicts on the
       PK only, on both dialects, so a secondary unique violation raises instead of
       silently replacing). Verified on SQLite + real Postgres.
-- [ ] **Typed `event.decoded`** (infer payload type from the ABI) — deferred: a
+- [ ] **Typed `event.decoded`** (infer payload type from the ABI), deferred: a
       pure compile-time ergonomics win over a dynamic decoder; no runtime risk.
-- [ ] Derived/computed fields — deferred (expressible today in handlers/`onBlock`).
+- [ ] Derived/computed fields, deferred (expressible today in handlers/`onBlock`).
 *Why:* real apps (DEX, lending) need relations and typed payloads.
 
-### M17 — Query power + API safety · P0 · **DONE** (opidx-#48, closes bug #42)
+### M17, Query power + API safety · P0 · **DONE** (opidx-#48, closes bug #42)
 - [x] **Push filter/sort/pagination into SQL (the P0 verified gap #42).**
       `store.query` / `store.countWhere` compile the connection args into a
-      **parameterised** `WHERE … ORDER BY … LIMIT` (keyset) statement — no
+      **parameterised** `WHERE ... ORDER BY ... LIMIT` (keyset) statement, no
       whole-table load. Bench: **10 000× fewer rows loaded, ~154× faster**
       (`npm run bench:query`). bigint range/order CAST to NUMERIC (exact on PG,
       verified at uint256 scale). Field names schema-validated, never interpolated.
 - [x] Filter operators `_not/_gt/_lt/_gte/_lte/_contains/_starts_with/_ends_with/_in`.
-      (`AND`/`OR` nesting still TODO — current semantics are AND-of-predicates.)
+      (`AND`/`OR` nesting still TODO, current semantics are AND-of-predicates.)
 - [x] **Keyset cursor pagination** (`(sortValue, id) > cursor`), stable under
       concurrent writes; a past-the-end cursor now returns empty (old code
       wrongly returned page 1).
-- [x] First-class **time-series helpers** — `defineCandles` maintains OHLCV per
+- [x] First-class **time-series helpers**: `defineCandles` maintains OHLCV per
       time bucket incrementally (opidx-#56, raised by external review). The bucket
       is SQL-indexed, so a candle time-range is an index range query (M17).
       `npm run dogfood:candles`.
 - [x] **Row-cap + depth limiting** (done in M22); **field-count complexity** cap
-      is the remaining safety item — deferred (depth + row-cap already bound cost).
+      is the remaining safety item, deferred (depth + row-cap already bound cost).
 *Why:* the API is the product surface; it must be powerful, scalable *and* safe.
 
 ---
 
-## Phase D — Operability (an A+ indexer runs in production unattended)
+## Phase D, Operability (an A+ indexer runs in production unattended)
 
-### M18 — Production ops · P0 · **DONE** (opidx-#47) — see docs/operations.md
+### M18, Production ops · P0 · **DONE** (opidx-#47), see docs/operations.md
 - [x] **Graceful shutdown**: `shutdown()` drains the in-flight block (atomic),
       stops the subscription, closes server + DB, runs hooks;
       `installSignalHandlers()` wires SIGTERM/SIGINT. Dogfood proves checkpoint
@@ -160,87 +160,87 @@ round-trip is a full RTT.
       clock; `/health` returns **503** on stalled/draining/stopped for LB drain.
 - [x] **Expanded metrics**: per-chain `blocks_behind`/`last_block`/`idle_ms`,
       `reorgs_total`, `errors_total`, a handler-latency **histogram**, uptime, and
-      a one-hot `health_state` gauge — all Prometheus text format.
+      a one-hot `health_state` gauge, all Prometheus text format.
 - [x] **Tracing**: an OpenTelemetry-SHAPED tracer hook (`Tracer`/`Span`), span per
-      block, `jsonTracer` exporter; SDK deliberately **not** bundled — bridge
+      block, `jsonTracer` exporter; SDK deliberately **not** bundled, bridge
       documented. Honestly a hook, not a shipped integration.
 - [x] **Retry/backoff** (exp + full jitter) on the source (`EvmLogSource.retry`),
       with request/retry counters. `withRetry` exported.
-- [ ] Per-source **rate-limit + backpressure** — deferred to M19 (deploy/config).
-- Drive-by: fixed a **real pre-existing DoS** — an oversized POST body crashed the
+- [ ] Per-source **rate-limit + backpressure**: deferred to M19 (deploy/config).
+- Drive-by: fixed a **real pre-existing DoS**: an oversized POST body crashed the
       whole GraphQL listener (unhandled socket error); it now replies 413 and the
       server stays up (`tests/security.test.ts`).
 *Why:* "is it alive, how far behind, why is it slow" must be answerable at 3am.
 
-### M19 — Deploy, config & migrations · P1 · **DONE** (opidx-#53)
-- [x] **Config validation** (`loadConfig`): dependency-free schema validator —
+### M19, Deploy, config & migrations · P1 · **DONE** (opidx-#53)
+- [x] **Config validation** (`loadConfig`): dependency-free schema validator -
       coerces env types, applies defaults, reports **every** problem at once with a
       clear `ConfigError`. (string/number/integer/boolean/url, min/max/enum/custom env.)
 - [x] **Incremental schema migrations**: adding a field `ALTER TABLE ADD COLUMN`s
-      in place on startup (existing rows get the default) — no reset-from-genesis.
+      in place on startup (existing rows get the default), no reset-from-genesis.
       Idempotent; lossy changes are intentionally NOT auto-applied. SQLite + PG.
 - [x] Production **Docker image** (multi-stage, non-root, **dumb-init** so SIGTERM
       reaches shutdown) + **Railway/k8s** deploy docs + horizontal-scaling model
       (partition writers per chain; stateless read replicas). docs/deploy.md +
       docs/deploy/Dockerfile (buildkit-validated).
-- [ ] **Fast-sync / snapshot restore** from a peer + retention policies — deferred
+- [ ] **Fast-sync / snapshot restore** from a peer + retention policies, deferred
       (documented: re-index from fromBlock or restore a PG base backup).
 *Why:* re-indexing from genesis on every schema tweak is a dealbreaker at scale.
 
 ---
 
-## Phase E — Chains, DX & ecosystem (adoption)
+## Phase E, Chains, DX & ecosystem (adoption)
 
-### M20 — A third chain + the fast path · P1 · **DONE** (opidx-#55)
-- [x] **Solana adapter** — a third chain (non-EVM, non-OPNET) through the
+### M20, A third chain + the fast path · P1 · **DONE** (opidx-#55)
+- [x] **Solana adapter**: a third chain (non-EVM, non-OPNET) through the
       chain-neutral core, dependency-free: Anchor-style event decoding
       (8-byte `sha256("event:"+Name)` discriminator + minimal **Borsh** codec +
       base58 pubkeys), a `SolanaChainMeta`, and a `SolanaLogSource` that turns
       `Program data:` logs into `ChainEvent`s over an injectable fetcher (RPC/
       Geyser/fixture). Indexed through the SAME `createIndexer` + store + GraphQL
       as EVM/OPNET (`npm run dogfood:solana`). Three adapters ⇒ "many" is true.
-- [ ] Wire **HyperSync** as the EVM default — stays **opidx-#18** (network +
+- [ ] Wire **HyperSync** as the EVM default, stays **opidx-#18** (network +
       token-gated; the token/auth + rate-limit handling is tracked there).
 *Why:* "many chains" should be true, and Solana is where the demand is.
 
 > **Honest limitation:** the Solana adapter is proven on **synthetic Anchor
 > fixtures** (decoder round-trips against known-good vectors + an end-to-end
-> indexed dogfood), *not yet* against a live validator — EVM has both live-anvil
+> indexed dogfood), *not yet* against a live validator, EVM has both live-anvil
 > and live-mainnet proofs. A live-Solana proof needs the Solana CLI + Anchor +
 > `solana-test-validator` (a heavy Rust/validator toolchain, absent in this
 > environment); it stays a tracked follow-up, not a silent gap. The decoding path
 > (discriminator + Borsh + base58) is the part most worth proving, and it is the
 > part the fixtures exercise directly.
 
-### M21 — DX & release engineering · P1 · **DONE** (opidx-#54)
+### M21, DX & release engineering · P1 · **DONE** (opidx-#54)
 - [x] **CLI** `counter-index init` scaffolds a runnable project (tested; fixed a real
-      bug — it scaffolded the wrong package name, so the dep wouldn't resolve).
+      bug, it scaffolded the wrong package name, so the dep wouldn't resolve).
 - [x] **Named-handler perf attribution** (#34): per-event latency in
       `indexer.handlerStats()` + `/metrics` (`opindex_handler_calls{event}`,
       `opindex_handler_ms_sum{event}`) + a **slow-handler WARN** over `slowHandlerMs`.
 - [x] **Middleware/hooks**: `beforeBlock` (before events, in-tx) + `onBlock`
       (after) + an `onError` observer (fires on a handler error without swallowing
-      it — the block still rolls back).
+      it, the block still rolls back).
 - [~] **Examples gallery**: `examples/evm-portfolio` is runnable; ERC-721/DEX/
-      lending are additional examples — a docs task, not a correctness gap.
+      lending are additional examples, a docs task, not a correctness gap.
 - [x] **Honest comparison page**: docs/benchmarks.md "Cross-tool comparison"
       (points at the Envio-maintained harness; typedoc site is a build task).
 - [ ] **Automated npm release**: documented, but publishing is out of scope for
-      this repo (no npm publish) — the semver/CHANGELOG flow lives in CLAUDE.md.
+      this repo (no npm publish), the semver/CHANGELOG flow lives in CLAUDE.md.
 *Why:* adoption is a function of first-run experience and docs, not features.
 
 ---
 
-## Phase F — Security (non-negotiable for trust)
+## Phase F, Security (non-negotiable for trust)
 
-### M22 — Security audit + hardening · P0 · ~1–2 days
+### M22, Security audit + hardening · P0 · ~1–2 days
 - [ ] **GraphQL path: injection-safe, not scale-safe** (verified). `where`/
       `orderBy`/pagination are applied in JS over a full `store.list()`, so there
-      is **no SQL injection** — but the unbounded in-memory load is a **DoS**
+      is **no SQL injection**: but the unbounded in-memory load is a **DoS**
       problem. Real SQL goes in via M17; here add a hard **row cap / query
       timeout** so one query can't OOM the process. (When M17 does move filters to
-      SQL, keep `orderBy` field names and table names on an **allow-list** — never
-      interpolate them — so the move doesn't *introduce* an injection vector.)
+      SQL, keep `orderBy` field names and table names on an **allow-list**: never
+      interpolate them, so the move doesn't *introduce* an injection vector.)
 - [ ] **API auth** (optional bearer) + **rate limiting** + the complexity limit
       from M17.
 - [ ] **Dependency audit** (`npm audit`, provenance, lockfile integrity) + a
@@ -254,29 +254,29 @@ regardless of how good everything else is.
 
 ## Priority ladder (what order, honestly)
 
-1. **M10, M22** — atomicity + the injection audit. Cheap, highest trust/safety ROI.
-2. **M12** — mutation + property + PG tests. Proves correctness instead of asserting it.
-3. **M13, M18** — batched writes/indexes + graceful shutdown/health. Makes it production-fast and operable.
-4. **M11, M14** — reorg matrix + HyperSync/parallel backfill. Hardens the two hardest subsystems.
-5. **M16, M17, M19** — relations, query power, migrations/deploy. Rounds out the product.
-6. **M20, M21, M15** — Solana, DX/CLI/docs, public benchmarks. The adoption + "many chains" story.
+1. **M10, M22**: atomicity + the injection audit. Cheap, highest trust/safety ROI.
+2. **M12**: mutation + property + PG tests. Proves correctness instead of asserting it.
+3. **M13, M18**: batched writes/indexes + graceful shutdown/health. Makes it production-fast and operable.
+4. **M11, M14**: reorg matrix + HyperSync/parallel backfill. Hardens the two hardest subsystems.
+5. **M16, M17, M19**: relations, query power, migrations/deploy. Rounds out the product.
+6. **M20, M21, M15**: Solana, DX/CLI/docs, public benchmarks. The adoption + "many chains" story.
 
 ## Post-A+ follow-ups (shipped)
 Beyond the M10–M22 bar, two adoption-facing extras landed:
-- **OHLCV candles · #56 · DONE** — `defineCandles` maintains incremental
+- **OHLCV candles · #56 · DONE**: `defineCandles` maintains incremental
   open/high/low/close/volume/trades per time bucket (SQL-indexed `bucket`); the
   DEX "give me 1m candles" path. See `src/candles.ts`, `dogfood/candles.ts`.
-- **Serving-scale read path · #57 · DONE** — three cache- and proxy-friendly read
+- **Serving-scale read path · #57 · DONE**: three cache- and proxy-friendly read
   surfaces on the same `store.query` SQL pushdown + keyset cursors as GraphQL,
   on the one zero-dependency http server:
-  - **REST projection** — `GET /v1/:entity[/:id]`, cacheable (`Cache-Control:
+  - **REST projection**: `GET /v1/:entity[/:id]`, cacheable (`Cache-Control:
     public, s-maxage + stale-while-revalidate`) with ETag/`304` revalidation, so
     hot reads sit behind a CDN edge (which GraphQL-over-POST forfeits).
-  - **SQL-over-HTTP** — `POST /sql`, a typed, allow-listed, parameterised query
-    (`{entity, where, orderBy, first, after, select}`) — the full filter object a
+  - **SQL-over-HTTP**: `POST /sql`, a typed, allow-listed, parameterised query
+    (`{entity, where, orderBy, first, after, select}`), the full filter object a
     REST query-string can't express. No raw identifier interpolation.
-  - **Live queries (SSE)** — `GET /live?entity=…&<filters>`, a plain-HTTP
-    `text/event-stream` of matching store changes — proxies and load balancers
+  - **Live queries (SSE)**: `GET /live?entity=...&<filters>`, a plain-HTTP
+    `text/event-stream` of matching store changes, proxies and load balancers
     pass it through unchanged (no WebSocket upgrade).
   Inherits the GraphQL endpoint's auth token + page cap; a bearer-gated REST
   response is marked `private, no-store`. See `src/serving.ts`,
@@ -291,4 +291,4 @@ are tested on a devnet matrix; mutations die and Postgres is CI-tested; writes a
 batched and indexed; it shuts down gracefully and reports real health + OTel traces;
 the GraphQL API is injection-audited, auth'd and complexity-limited; there are three
 chains; and there's a CLI, examples, docs site and automated releases. None of it is
-exotic — it's the unglamorous 20% that production trust is made of.
+exotic, it's the unglamorous 20% that production trust is made of.

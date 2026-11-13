@@ -2,14 +2,14 @@
 
 The store is counter-index's async CRUD interface over your `opindex_*` tables. You access it inside
 handlers via `ctx.store`, or from outside the handler pipeline via `indexer.store`. It abstracts
-over SQLite and Postgres — the same API works for both.
+over SQLite and Postgres, the same API works for both.
 
 ## Reference
 
 ### `store.set(entity, id, data)`
 
 Insert or overwrite an entity. If a record with the given `id` already exists it is replaced in
-full. This is an upsert — there is no separate `insert`.
+full. This is an upsert, there is no separate `insert`.
 
 ```ts
 await ctx.store.set('Pool', contractAddress, {
@@ -23,7 +23,7 @@ await ctx.store.set('Pool', contractAddress, {
 });
 ```
 
-`id` is always a `string`. Choose something stable and unique — contract address, transaction
+`id` is always a `string`. Choose something stable and unique, contract address, transaction
 hash, composite key, etc. counter-index does not generate ids for you.
 
 ### `store.get(entity, id)`
@@ -39,7 +39,7 @@ if (pool) {
 
 ### `store.update(entity, id, partial)`
 
-Merge partial fields into an existing entity. Only the fields you pass are changed — all others
+Merge partial fields into an existing entity. Only the fields you pass are changed, all others
 are left untouched. **Throws** if the entity does not exist.
 
 ```ts
@@ -55,21 +55,21 @@ event updates reserves but not token addresses).
 > **Footgun: entities created before `FROM_BLOCK` do not exist in the store.**
 >
 > If you set `FROM_BLOCK` to a block after a contract was deployed, the `set()` that would have
-> created the entity never runs — but later `update()` events for that entity still fire and will
+> created the entity never runs, but later `update()` events for that entity still fire and will
 > throw. Always guard with `store.get()` before calling `update()` on an entity that may predate
 > your index start:
 >
 > ```ts
 > indexer.on('MarketCapacityUpdated', async (event, ctx) => {
 >   const market = await ctx.store.get('Market', marketId);
->   if (!market) return; // created before FROM_BLOCK — skip
+>   if (!market) return; // created before FROM_BLOCK, skip
 >   await ctx.store.update('Market', marketId, { capacity: newCapacity });
 > });
 > ```
 
 ### `store.delete(entity, id)`
 
-Remove an entity. No-op if it does not exist — never throws on missing records.
+Remove an entity. No-op if it does not exist, never throws on missing records.
 
 ```ts
 await ctx.store.delete('Pool', contractAddress);
@@ -77,7 +77,7 @@ await ctx.store.delete('Pool', contractAddress);
 
 ### `store.list(entity)`
 
-Return all entities of a given type. Order is not guaranteed — use the GraphQL API if you need
+Return all entities of a given type. Order is not guaranteed, use the GraphQL API if you need
 sorted or filtered results.
 
 ```ts
@@ -98,7 +98,7 @@ const total = await ctx.store.count('Pool');
 ### `store.find(entity, predicate)`
 
 Filter entities in JavaScript after a full table scan. Convenient for small datasets; avoid it
-at production scale — the GraphQL `where` filters push predicate logic closer to the database.
+at production scale, the GraphQL `where` filters push predicate logic closer to the database.
 
 ```ts
 const activePools = await ctx.store.find('Pool', (p) => p['active'] === true);
@@ -133,7 +133,7 @@ interface StoreChangeEvent {
 }
 ```
 
-`onChange` is what powers GraphQL subscriptions internally — every `store.set()` and
+`onChange` is what powers GraphQL subscriptions internally, every `store.set()` and
 `store.update()` in your handlers automatically pushes updates to any connected WebSocket clients
 when `serve({ subscriptions: true })` is active.
 
@@ -149,13 +149,13 @@ const active   = pool!['active']   as boolean;
 ```
 
 `bigint` fields are deserialised from SQL's decimal string representation back to native `BigInt`
-on every read — you never need to call `BigInt()` on store results, only on values coming from
+on every read, you never need to call `BigInt()` on store results, only on values coming from
 `event.decoded` (which arrives as strings from the decoder).
 
 > **Postgres `int` fields return as strings at runtime.**
 >
 > node-postgres maps `BIGINT` columns to JavaScript strings (not numbers) to avoid precision loss.
-> The `as number` cast above is compile-time only — at runtime `feeBps` is still the string `"30"`.
+> The `as number` cast above is compile-time only, at runtime `feeBps` is still the string `"30"`.
 > This is harmless for most reads, but causes silent bugs when you do arithmetic and then store
 > the result back:
 >

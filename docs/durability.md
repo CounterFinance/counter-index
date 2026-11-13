@@ -14,7 +14,7 @@ advance past partially-applied entity state, because they commit together.
 
 (Before M10 only steps 2–4 were transactional; entity writes auto-committed
 per `store.set`, so a crash mid-block could leave partial state with the
-checkpoint behind it. Fixed and proven — see below.)
+checkpoint behind it. Fixed and proven, see below.)
 
 ## Exactly-once on restart
 On startup an indexer resumes from `readCheckpoint().lastBlock + 1`. Combined with
@@ -32,7 +32,7 @@ transaction), so running-balance accumulation is correct.
 
 ## Live mode note
 In `subscribe`, the current (tip) block's events are buffered and committed when
-the **next** block arrives — so the committed frontier is one block behind the
+the **next** block arrives, so the committed frontier is one block behind the
 tip. That is deliberate: it keeps the unconfirmed tip out of durable state, which
 is also safer for reorgs.
 
@@ -40,7 +40,7 @@ is also safer for reorgs.
 `npm run dogfood:atomicity` runs a deterministic event stream into a file-backed
 SQLite sink, then **kills the worker (`process.exit(137)`, simulating `kill -9`)
 at random points mid-block**, restarting each time, with a final uninterrupted
-pass. The crash-ridden result must equal a clean run **exactly** — same per-holder
+pass. The crash-ridden result must equal a clean run **exactly**: same per-holder
 counts, totals matching, no double counts, no gaps. Verified: 3 injected crashes,
 `golden == final`, `sum(n) == total`.
 

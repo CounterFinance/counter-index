@@ -6,7 +6,7 @@ metrics, shutdown) and [durability.md](./durability.md) (atomicity, reorgs).
 
 ## Config (validated, fail-fast)
 
-Load config from the environment with `loadConfig` — it coerces types, applies
+Load config from the environment with `loadConfig`: it coerces types, applies
 defaults, and reports **every** problem at once so a bad deploy dies at startup,
 not an hour into a backfill:
 
@@ -52,10 +52,10 @@ indexer.installSignalHandlers();                // SIGTERM/SIGINT -> shutdown() 
 
 - **Readiness probe → `GET /health`.** It returns **503** when `stalled`,
   `draining`, or `stopped`, so the orchestrator drains the pod automatically; 200
-  otherwise (`degraded` stays 200 — still progressing).
+  otherwise (`degraded` stays 200, still progressing).
 - **`terminationGracePeriodSeconds` ≥ your max block time** so the in-flight block
   can finish before SIGKILL. Block commits are atomic, so a kill only ever costs
-  the current block (re-applied on restart — exactly-once).
+  the current block (re-applied on restart, exactly-once).
 - **Metrics:** scrape `GET /metrics` (Prometheus). Alert on
   `opindex_health_state{state="stalled"} == 1` and `opindex_chain_blocks_behind`.
 
@@ -70,7 +70,7 @@ terminationGracePeriodSeconds: 60
 
 counter-index scales by **partitioning writers**, not by replicating one. Each chain
 (or each disjoint contract set) is its own single-writer process with its own
-per-chain checkpoint — never two writers on the same `(chainId, entity)` range, or
+per-chain checkpoint, never two writers on the same `(chainId, entity)` range, or
 they race the checkpoint. Read scaling is separate: the GraphQL API is stateless,
 so run many read replicas of `serve()` against the same Postgres and put them
 behind a load balancer. For multichain, `createMultiIndexer` with a dedicated
@@ -79,12 +79,12 @@ behind a load balancer. For multichain, `createMultiIndexer` with a dedicated
 ## Schema migrations
 
 Adding a field to your schema is applied **in place** on startup (`ALTER TABLE ADD
-COLUMN`, existing rows get the field's default) — no reset-from-genesis. counter-index
+COLUMN`, existing rows get the field's default), no reset-from-genesis. counter-index
 does **not** auto-apply lossy changes (type changes, drops, renames); do those as
 a deliberate migration + re-index of the affected entity.
 
 ## Not covered here
 
 Fast-sync / snapshot restore from a peer and automated data-retention policies are
-a documented follow-up — today, re-index from `fromBlock` or restore a Postgres
+a documented follow-up, today, re-index from `fromBlock` or restore a Postgres
 base backup.

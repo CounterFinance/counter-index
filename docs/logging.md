@@ -32,7 +32,7 @@ import { createLogger } from '@counterfinance/counter-index';
 const indexer = await createIndexer({ schema, sink, logger: createLogger({ level: 'info' }) });
 ```
 
-- **JSON mode** (non-TTY / production) emits **pino-shaped** lines — pino's numeric
+- **JSON mode** (non-TTY / production) emits **pino-shaped** lines, pino's numeric
   levels (`10`–`50`), `time`, base bindings (`pid`, `hostname`), then `ctx`, `msg`
   and your fields:
   ```json
@@ -41,14 +41,14 @@ const indexer = await createIndexer({ schema, sink, logger: createLogger({ level
   Because the shape matches pino, it pipes straight into tooling:
   ```bash
   node indexer.js | pino-pretty          # pretty-print locally
-  node indexer.js | vector / promtail …  # ship JSON lines to Loki/Datadog/ELK
+  node indexer.js | vector / promtail ...  # ship JSON lines to Loki/Datadog/ELK
   ```
 - **Pretty mode** (TTY) prints a clean, coloured line for humans:
   ```
   12:34:56.789 INFO  (indexer): subscribe start from_block=100
   ```
 
-Options: `level`, `pretty` (auto by TTY), `base` (override/extend pid/hostname —
+Options: `level`, `pretty` (auto by TTY), `base` (override/extend pid/hostname -
 e.g. `{ service, env }`), `write` (custom sink). bigint fields are serialised
 safely. The five levels map to volume as documented in `src/logger.ts`
 (info ≤ ~1/s, debug 10–100/s, trace 1000+/s).
@@ -56,5 +56,5 @@ safely. The five levels map to volume as documented in `src/logger.ts`
 ## Metrics vs logs
 
 Logs are for events; **operational numbers live on `/metrics`** (Prometheus) and
-`/health` from `indexer.serve()` — see the observability section of the roadmap.
+`/health` from `indexer.serve()`: see the observability section of the roadmap.
 Don't scrape logs for throughput; scrape `/metrics`.

@@ -5,7 +5,7 @@ subscribes to new ones, and serves a GraphQL API your frontend can query.
 
 ## 1. Define your schema
 
-Everything starts with `defineSchema`. Declare the entities you want to index — counter-index creates
+Everything starts with `defineSchema`. Declare the entities you want to index, counter-index creates
 one SQL table per entity in your sink database, prefixed `opindex_` to avoid collisions.
 
 ```ts
@@ -32,13 +32,13 @@ See [Schema](./schema.md) for all field types and options.
 
 ## 2. Open source and sink connections
 
-**Source** — where counter-index reads raw chain events from.
-**Sink** — where counter-index writes your derived `opindex_*` tables.
+**Source**: where counter-index reads raw chain events from.
+**Sink**: where counter-index writes your derived `opindex_*` tables.
 
 ```ts
 import { DbEventSource, openSqlite } from '@counterfinance/counter-index';
 
-// Fast path — OpStream-ready database (recommended for production)
+// Fast path, OpStream-ready database (recommended for production)
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
 const sink   = openSqlite('/data/opindex.db');
 ```
@@ -70,7 +70,7 @@ See [Sources](./sources.md) for Postgres, custom adapters, and the full options 
 
 ## 3. Create the indexer
 
-`createIndexer` is async — it creates the `opindex_*` tables in your sink database on first run
+`createIndexer` is async, it creates the `opindex_*` tables in your sink database on first run
 and is a no-op on subsequent runs.
 
 ```ts
@@ -153,7 +153,7 @@ const stop = indexer.subscribe(latestBlock + 1, { pollIntervalMs: 5000 });
 stop();
 ```
 
-OPNET is a Bitcoin L2 — its block cadence follows Bitcoin's rhythm rather than a fixed per-second
+OPNET is a Bitcoin L2, its block cadence follows Bitcoin's rhythm rather than a fixed per-second
 clock. A 10-second poll interval is more than sufficient for any non-latency-critical use case;
 the default of 10,000 ms is a safe starting point and can be tuned down as the network matures.
 
@@ -208,7 +208,7 @@ patterns, and subscription behaviour.
 
 ## 8. Query the store directly
 
-You can also read indexed data without going through GraphQL — useful in the same process:
+You can also read indexed data without going through GraphQL, useful in the same process:
 
 ```ts
 const all      = await indexer.store.list('Transfer');

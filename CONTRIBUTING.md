@@ -1,6 +1,6 @@
 # Contributing to counter-index
 
-Thanks for your interest. counter-index is an MIT-licensed indexer framework for OPNET — contributions
+Thanks for your interest. counter-index is an MIT-licensed indexer framework for OPNET, contributions
 that improve correctness, performance, documentation, or developer experience are welcome.
 
 ## Before you start
@@ -24,8 +24,8 @@ npm install
 ```bash
 npm test              # run all tests (vitest)
 npm run test:watch    # watch mode
-npx tsc --noEmit      # type check — must be clean
-npm run lint          # ESLint — must be zero errors
+npx tsc --noEmit      # type check, must be clean
+npm run lint          # ESLint, must be zero errors
 ```
 
 Or with `just` if you have it installed:
@@ -37,11 +37,11 @@ just test-watch       # watch mode
 just doctor           # verify your environment
 ```
 
-Tests use an in-memory SQLite adapter — no database setup needed.
+Tests use an in-memory SQLite adapter, no database setup needed.
 
 ## Code style
 
-- TypeScript strict mode throughout — no `any`, no `// @ts-ignore`
+- TypeScript strict mode throughout, no `any`, no `// @ts-ignore`
 - No runtime dependencies beyond `graphql` (already a dep) and `better-sqlite3` (optional peer)
 - Keep new source files under `src/`, tests under `tests/`
 - Match the existing file structure: one concern per file, named by what it does
@@ -69,6 +69,6 @@ Every new behaviour needs a test. counter-index targets 100% branch coverage on 
 
 ## What we are not looking for
 
-- Runtime dependency additions — counter-index is intentionally lean
+- Runtime dependency additions, counter-index is intentionally lean
 - Breaking changes to `defineSchema`, `createIndexer`, or store CRUD without a compelling reason
 - Features specific to a single contract or protocol (use `registerDecoder()` in your own indexer instead)

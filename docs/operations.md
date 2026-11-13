@@ -20,7 +20,7 @@ metrics scrape → graceful shutdown, all asserted).
 | `draining` | graceful shutdown in progress | **503** |
 | `stopped` | shut down | **503** |
 
-`degraded` and `stalled` are **derived at read time** from the clock + lag — there
+`degraded` and `stalled` are **derived at read time** from the clock + lag, there
 is no background timer, and a newly-discovered lagging chain demotes a `live`
 indexer back to `backfilling` automatically. The 503 states are what a Kubernetes
 readiness probe or a load balancer should drain on. Tune the thresholds:
@@ -41,7 +41,7 @@ opindex_entitiesWritten 51233
 opindex_reorgs_total 0
 opindex_errors_total 0
 opindex_uptime_ms 3600123
-opindex_health_state{state="live"} 1          # one-hot gauge — alert on == "stalled"
+opindex_health_state{state="live"} 1          # one-hot gauge, alert on == "stalled"
 opindex_health_state{state="stalled"} 0
 opindex_chain_blocks_behind{chain="1"} 0      # per-chain lag
 opindex_chain_last_block{chain="1"} 21034111
@@ -71,7 +71,7 @@ indexer.onShutdown(async () => { /* flush your own resources */ });
 `shutdown()` (idempotent):
 1. marks the indexer `draining` (so `/health` returns 503 and LBs drain it),
 2. stops the live subscription (no new blocks start),
-3. **awaits the in-flight block** — block commits are atomic (see
+3. **awaits the in-flight block**: block commits are atomic (see
    [durability.md](./durability.md)), so this lands on a clean block boundary;
    the checkpoint never advances past partially-applied state,
 4. closes the HTTP server, then the sink DB,
@@ -83,18 +83,18 @@ cost you the *current* block, which is simply re-fetched and re-applied on resta
 
 ## Tracing (OpenTelemetry-shaped hook)
 
-counter-index does **not** bundle the OpenTelemetry SDK — a library shouldn't force a
+counter-index does **not** bundle the OpenTelemetry SDK, a library shouldn't force a
 tracing backend on its host. Instead it emits one span per block through a small
 `Tracer` interface you can point anywhere:
 
 ```ts
 import { jsonTracer } from '@counterfinance/counter-index';
 
-// Local dogfooding — one JSON line per block span:
+// Local dogfooding, one JSON line per block span:
 await createIndexer({ schema, sink, source, tracer: jsonTracer((line) => logger.info(line)) });
 ```
 
-Bridging to a real collector is a ~10-line shim — wrap your OTel tracer so
+Bridging to a real collector is a ~10-line shim, wrap your OTel tracer so
 `startSpan(name, attrs)` returns `{ setAttribute, end }`:
 
 ```ts
@@ -109,7 +109,7 @@ const tracer = {
 await createIndexer({ schema, sink, source, tracer });
 ```
 
-This is deliberately a **hook, not an integration** — spans don't reach a
+This is deliberately a **hook, not an integration**: spans don't reach a
 collector until you wire one. Labelled honestly so nobody assumes otherwise.
 
 ## Retry / backoff on the source
