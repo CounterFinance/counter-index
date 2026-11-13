@@ -80,7 +80,7 @@ function hexToUint8Array(hex: string): Uint8Array {
 function toChainEvent(raw: OpStreamWebhookEvent): ChainEvent {
   const eventRaw = hexToUint8Array(raw.eventRaw);
 
-  // OpStream broadcasts raw event bytes only — decoding lives entirely in op-index's
+  // OpStream broadcasts raw event bytes only — decoding lives entirely in counter-index's
   // DECODER_REGISTRY and is applied at read time. Adding a new decoder instantly
   // applies to subsequent broadcasts with no OpStream change.
   const decoded = opnetDecoder.decode({ raw: eventRaw, eventName: raw.eventName })?.decoded ?? null;
@@ -124,7 +124,7 @@ export class WsEventSource implements EventSource {
   // eslint-disable-next-line require-yield
   async *queryStream(): AsyncIterable<ChainEvent> {
     throw new Error(
-      '[op-index] WsEventSource is live-only — use DbEventSource for historical backfill.',
+      '[counter-index] WsEventSource is live-only — use DbEventSource for historical backfill.',
     );
   }
 

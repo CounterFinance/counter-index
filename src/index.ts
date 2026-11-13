@@ -1,5 +1,5 @@
 /**
- * @opnet-collective/op-index — chain-neutral indexer framework.
+ * @counterfinance/counter-index — chain-neutral indexer framework.
  *
  * Define a schema. Register event handlers. Feed chain data from a source
  * adapter via sync() or subscribe(). Query your indexed entities over an
@@ -93,7 +93,7 @@ export {
 
 // --- OPNET adapter ---------------------------------------------------------
 // Re-exported at the top level for convenience; the canonical path is
-// '@opnet-collective/op-index/chains/opnet'.
+// '@counterfinance/counter-index/chains/opnet'.
 
 export {
   DbEventSource,

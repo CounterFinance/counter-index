@@ -6,7 +6,7 @@
  *
  * This is a REAL-DATA proof (it has only ever run on anvil otherwise), not a
  * balance-correctness proof: over a partial block range balances don't net out.
- * It asserts op-index decodes genuine mainnet transfers with valid structure and
+ * It asserts counter-index decodes genuine mainnet transfers with valid structure and
  * populated timestamps, and reads back over GraphQL.
  */
 

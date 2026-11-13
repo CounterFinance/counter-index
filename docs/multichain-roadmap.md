@@ -1,6 +1,6 @@
-# op-index — Multichain Architecture & Roadmap
+# counter-index — Multichain Architecture & Roadmap
 
-Status: design doc. Target: evolve op-index from an OPNET-only indexer into a
+Status: design doc. Target: evolve counter-index from an OPNET-only indexer into a
 **chain-neutral core + per-chain adapters**, without breaking the OPNET path.
 
 The guiding principle: **handlers, the store, the schema, and the GraphQL layer

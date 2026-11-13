@@ -1,6 +1,6 @@
 # Benchmarks
 
-## op-index's own backfill throughput
+## counter-index's own backfill throughput
 
 Reproduce: `npm run bench` (tune with `BENCH_BLOCKS` / `BENCH_PER_BLOCK`). This
 streams synthetic events through the **full pipeline** — source → handlers →
@@ -136,6 +136,6 @@ vendor's post:
 external-contract-calls and time-based snapshots. It is Envio-maintained, so treat
 the published leaderboard with that in mind and **re-run it on your own workload**.
 
-Adding op-index as a target there (a thin adapter around `EvmLogSource` +
+Adding counter-index as a target there (a thin adapter around `EvmLogSource` +
 `createIndexer`) is the honest way to place it on that leaderboard; tracked as a
 follow-up.

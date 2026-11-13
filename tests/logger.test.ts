@@ -48,10 +48,10 @@ describe('createLogger', () => {
     expect(typeof obj['pid']).toBe('number');
     expect(typeof obj['hostname']).toBe('string');
 
-    const custom = capture({ pretty: false, base: { service: 'op-index' } });
+    const custom = capture({ pretty: false, base: { service: 'counter-index' } });
     custom.log.info('x', 'm');
     const o2 = JSON.parse(custom.lines[0]!) as Record<string, unknown>;
-    expect(o2['service']).toBe('op-index');
+    expect(o2['service']).toBe('counter-index');
     expect(o2['pid']).toBeUndefined();   // replaced, not merged
   });
 

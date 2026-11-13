@@ -1,7 +1,7 @@
 /**
  * Indexer — the main orchestrator.
  *
- * Wire up a schema, a sink DB (where op-index writes derived tables), and optionally
+ * Wire up a schema, a sink DB (where counter-index writes derived tables), and optionally
  * a source (where raw chain events are read from). Register event handlers, then
  * run backfill via sync() or go live via subscribe().
  *
@@ -40,7 +40,7 @@ import {
 
 export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   schema: Schema<S>;
-  /** Sink DB — op-index owns its own opindex_* tables here. */
+  /** Sink DB — counter-index owns its own opindex_* tables here. */
   sink: MinimalDbAdapter;
   /** Source — where raw chain events are read from. Required for sync() and subscribe(). */
   source?: EventSource;
@@ -156,7 +156,7 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
     options?: { pollIntervalMs?: number; filters?: EventSourceFilters },
   ): UnsubscribeFn;
 
-  /** The entity store — query op-index's derived tables here. */
+  /** The entity store — query counter-index's derived tables here. */
   readonly store: TypedStore<S>;
 
   /** Processing statistics. */
@@ -400,7 +400,7 @@ export async function createIndexer<S extends SchemaDefinition>(
   ): Promise<number> {
     stats.blocksProcessed++;
     const t0 = Date.now();
-    const span = tracer.startSpan('op-index.block', { block: blockNumber, events: events.length });
+    const span = tracer.startSpan('counter-index.block', { block: blockNumber, events: events.length });
     // Expose the in-flight commit so shutdown() can await a clean block boundary.
     const commit = config.sink.transaction(async () => {
       // Buffer every entity write for the block, then commit them as batched

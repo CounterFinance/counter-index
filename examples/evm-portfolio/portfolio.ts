@@ -1,5 +1,5 @@
 /**
- * evm-portfolio — a tiny but complete op-index app.
+ * evm-portfolio — a tiny but complete counter-index app.
  *
  * Indexes ERC-20 Transfer logs from one or more token contracts into running
  * holder balances + a transfer log, and serves it over GraphQL. This is the

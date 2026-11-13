@@ -1,13 +1,13 @@
 # Schema
 
-The schema is the contract between your business logic and op-index's storage layer. Define it once
-— op-index uses it to create SQL tables, validate store writes, and auto-generate your entire GraphQL
+The schema is the contract between your business logic and counter-index's storage layer. Define it once
+— counter-index uses it to create SQL tables, validate store writes, and auto-generate your entire GraphQL
 API. No SDL, no migration files, no codegen step.
 
 ## defineSchema
 
 ```ts
-import { defineSchema } from '@opnet-collective/op-index';
+import { defineSchema } from '@counterfinance/counter-index';
 
 const schema = defineSchema({
   Pool: {
@@ -40,7 +40,7 @@ when calling `store.set()`.
 
 ### bigint
 
-OPNET deals heavily in 256-bit integers. op-index stores `bigint` values as decimal strings in SQL
+OPNET deals heavily in 256-bit integers. counter-index stores `bigint` values as decimal strings in SQL
 (there is no native 256-bit integer type in SQLite or Postgres) and deserialises them back to
 `BigInt` on every read. Over GraphQL they are serialised as decimal strings again — pass them as
 quoted string literals in queries:
@@ -88,7 +88,7 @@ await ctx.store.update('Pool', id, {
 
 ### bytes
 
-Store raw binary data (event payloads, hashes). op-index does not automatically hex-encode bytes
+Store raw binary data (event payloads, hashes). counter-index does not automatically hex-encode bytes
 fields — that is left to your handler. When exposed over GraphQL, `bytes` fields are typed as
 `String` and whatever value you stored is returned verbatim.
 
@@ -109,7 +109,7 @@ returns `undefined`. Over GraphQL it serialises as `null`.
 
 ## SQL table names
 
-op-index prefixes every table with `opindex_` (lowercased entity name) to avoid collisions with
+counter-index prefixes every table with `opindex_` (lowercased entity name) to avoid collisions with
 OpStream's raw tables when both live in the same database:
 
 | Entity | Table |

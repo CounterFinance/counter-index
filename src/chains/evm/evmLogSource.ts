@@ -76,7 +76,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
 
   constructor(options: EvmLogSourceOptions) {
     if (!options.client && !options.rpcUrl) {
-      throw new Error('[op-index] EvmLogSource requires either `client` or `rpcUrl`.');
+      throw new Error('[counter-index] EvmLogSource requires either `client` or `rpcUrl`.');
     }
     this.client = options.client ?? createPublicClient({ transport: http(options.rpcUrl) });
     this.decoder = new EvmAbiDecoder(options.abi);
@@ -170,7 +170,7 @@ export class EvmLogSource implements EventSource, DynamicSource {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[op-index] EvmLogSource poll error (retry in ${intervalMs / 1000}s): ${msg}`);
+        console.warn(`[counter-index] EvmLogSource poll error (retry in ${intervalMs / 1000}s): ${msg}`);
       }
       if (!stopped) setTimeout(() => { void poll(); }, intervalMs);
     };

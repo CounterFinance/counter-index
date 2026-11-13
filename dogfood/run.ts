@@ -1,5 +1,5 @@
 /**
- * op-index dogfood harness.
+ * counter-index dogfood harness.
  *
  * Runs the framework end-to-end against a deterministic, seeded OPNET source and
  * snapshots the derived state (entities + GraphQL) to a golden file. This is the

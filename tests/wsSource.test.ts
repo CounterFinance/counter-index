@@ -174,9 +174,9 @@ describe('WsEventSource', () => {
     expect(Array.from(captured!)).toEqual([0x01, 0x02, 0xff]);
   });
 
-  // ── subscribe() — op-index decoder takes priority ───────────────────────────
+  // ── subscribe() — counter-index decoder takes priority ───────────────────────────
 
-  it('uses op-index registered decoder when available', async () => {
+  it('uses counter-index registered decoder when available', async () => {
     // Register a decoder for 'PriorityEvent' that returns a known result
     const originalSize = DECODER_REGISTRY.size;
     registerDecoder('PriorityEvent', () => ({ custom: 'decoded' }));
@@ -199,7 +199,7 @@ describe('WsEventSource', () => {
 
   // ── subscribe() — unknown event names produce null decoded ───────────────
 
-  it('returns null decoded when no op-index decoder is registered', async () => {
+  it('returns null decoded when no counter-index decoder is registered', async () => {
     const source = new WsEventSource(url);
     let captured: Record<string, unknown> | null | undefined;
 

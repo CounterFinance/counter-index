@@ -20,7 +20,7 @@ suite('Postgres integration (real connection)', () => {
 
   beforeAll(async () => {
     adapter = await openPostgres(PG as string);
-    // Clean slate — drop any op-index tables from a previous run.
+    // Clean slate — drop any counter-index tables from a previous run.
     const rows = await adapter.all<{ tablename: string }>(
       "SELECT tablename FROM pg_tables WHERE tablename LIKE 'opindex_%'",
     );

@@ -1,9 +1,9 @@
 # Handlers
 
-Handlers are the heart of your indexer. They are async functions that op-index calls whenever a
+Handlers are the heart of your indexer. They are async functions that counter-index calls whenever a
 matching on-chain event passes through the pipeline — whether from a historical backfill or a
 live subscription. Your handler reads the decoded event, writes to the store, and returns.
-op-index handles the rest.
+counter-index handles the rest.
 
 ## Event handlers — `indexer.on`
 
@@ -156,7 +156,7 @@ interface BlockContext {
 For WebSocket push sources or testing, bypass the EventSource entirely:
 
 ```ts
-// Raw bytes — op-index decodes them first
+// Raw bytes — counter-index decodes them first
 await indexer.processRawEvent('Transferred', rawBytes, {
   blockNumber:     50,
   txHash:          '0xtx',

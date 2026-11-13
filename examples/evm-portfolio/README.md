@@ -1,6 +1,6 @@
 # evm-portfolio
 
-A complete op-index app in ~120 lines: index ERC-20 `Transfer` logs from any EVM
+A complete counter-index app in ~120 lines: index ERC-20 `Transfer` logs from any EVM
 chain into **running holder balances** + a **transfer log**, served over GraphQL.
 
 It's the "one framework, many chains" proof — the same schema → handlers →

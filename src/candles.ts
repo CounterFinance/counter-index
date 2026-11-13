@@ -62,7 +62,7 @@ export function candleBucket(tsSec: number, intervalSec: number): number {
  * last, volume=sum, trades=count). Candles are per-chain (ctx.store is scoped).
  */
 export function defineCandles(indexer: CandleIndexer, opts: DefineCandlesOptions): void {
-  if (opts.intervalSec <= 0) throw new Error('[op-index] defineCandles: intervalSec must be > 0');
+  if (opts.intervalSec <= 0) throw new Error('[counter-index] defineCandles: intervalSec must be > 0');
   indexer.on(opts.on, async (event, ctx) => {
     const ts = event.blockTimestamp;
     if (ts === undefined) return;                       // no time → can't bucket

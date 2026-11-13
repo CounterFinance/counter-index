@@ -1,4 +1,4 @@
-# op-index
+# counter-index
 
 Chain-neutral indexer framework. Define a schema, handle chain events, persist derived state
 to SQLite or Postgres, and serve it over a GraphQL API with cursor pagination and live
@@ -32,7 +32,7 @@ Multichain (several chains into one store + GraphQL, filtered by `chainId`), reo
 - Testnet: `https://testnet.opnet.org`
 - Mainnet: `https://mainnet.opnet.org`
 
-`DbEventSource` and `OpStreamRpcEventSource` require [OpStream](https://github.com/user-attachments/assets/33fa0410-fe7f-4785-9d1d-62118a81dbfb) — currently in private development by the opnet-collective. op-index itself is fully open source and source-agnostic.
+`DbEventSource` and `OpStreamRpcEventSource` require [OpStream](https://github.com/user-attachments/assets/33fa0410-fe7f-4785-9d1d-62118a81dbfb) — currently in private development by the opnet-collective. counter-index itself is fully open source and source-agnostic.
 
 ## Requirements
 
@@ -42,13 +42,13 @@ Multichain (several chains into one store + GraphQL, filtered by `chainId`), reo
 ## Install
 
 ```bash
-npm install @opnet-collective/op-index
+npm install @counterfinance/counter-index
 ```
 
 ## Minimal example
 
 ```ts
-import { defineSchema, createIndexer, DbEventSource, openSqlite } from '@opnet-collective/op-index';
+import { defineSchema, createIndexer, DbEventSource, openSqlite } from '@counterfinance/counter-index';
 
 const schema = defineSchema({
   Transfer: {
@@ -108,7 +108,7 @@ const handle = await indexer.serve({ port: 4000 }); // GraphQL at :4000/graphql
 - [x] Block handlers — `indexer.onBlock(handler)`
 - [x] GraphQL API — auto-generated schema, cursor pagination, GraphiQL playground
 - [x] GraphQL subscriptions — `serve({ subscriptions: true })` via `graphql-ws`
-- [x] CLI scaffolding — `npx @opnet-collective/op-index init`
+- [x] CLI scaffolding — `npx @counterfinance/counter-index init`
 - [ ] Reorg handling — rollback `opindex_*` state on chain reorgs
 
 ## License

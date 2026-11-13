@@ -1,10 +1,10 @@
 # Sources
 
-An EventSource is what op-index reads raw chain events from. It is completely decoupled from the
-sink (where op-index writes your indexed tables) — they can be different databases, different
+An EventSource is what counter-index reads raw chain events from. It is completely decoupled from the
+sink (where counter-index writes your indexed tables) — they can be different databases, different
 servers, or different technologies entirely.
 
-op-index ships two source implementations and a smart factory that picks the best one available.
+counter-index ships two source implementations and a smart factory that picks the best one available.
 
 ## Comparison
 
@@ -26,18 +26,18 @@ queries that schema with a single SQL statement per `sync()` call, making histor
 essentially instantaneous.
 
 ```ts
-import { DbEventSource, openSqlite } from '@opnet-collective/op-index';
+import { DbEventSource, openSqlite } from '@counterfinance/counter-index';
 
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
 ```
 
 ### With Postgres
 
-op-index ships its own `PostgresAdapter` backed by the `postgres` npm package. Use `openPostgres()`
+counter-index ships its own `PostgresAdapter` backed by the `postgres` npm package. Use `openPostgres()`
 for both the source (reading from an OpStream Postgres DB) and the sink:
 
 ```ts
-import { DbEventSource, openPostgres, createIndexer } from '@opnet-collective/op-index';
+import { DbEventSource, openPostgres, createIndexer } from '@counterfinance/counter-index';
 
 const source = new DbEventSource(await openPostgres(process.env.OPSTREAM_DB_URL!));
 const sink   = await openPostgres(process.env.OPINDEX_DB_URL!);
@@ -51,7 +51,7 @@ process.on('SIGTERM', async () => {
 });
 ```
 
-Source and sink can be the same Postgres instance — op-index's `opindex_` table prefix prevents
+Source and sink can be the same Postgres instance — counter-index's `opindex_` table prefix prevents
 collisions with OpStream's raw tables.
 
 ---
@@ -62,7 +62,7 @@ Connects to OpStream's WebSocket broadcast server. Events arrive fully enriched 
 populated — with sub-second latency. No DB reads, no RPC calls.
 
 ```ts
-import { WsEventSource } from '@opnet-collective/op-index';
+import { WsEventSource } from '@counterfinance/counter-index';
 
 const source = new WsEventSource('ws://localhost:8080');
 ```
@@ -80,7 +80,7 @@ For full-history indexers, pair it with `DbEventSource` for backfill and switch 
 for live subscriptions (wire them separately in your `main.ts`):
 
 ```ts
-import { DbEventSource, WsEventSource, openSqlite } from '@opnet-collective/op-index';
+import { DbEventSource, WsEventSource, openSqlite } from '@counterfinance/counter-index';
 
 // Backfill via SQL — instant
 const dbSource = new DbEventSource(openSqlite('/data/opstream.db'));
@@ -106,7 +106,7 @@ then resets to `reconnectDelayMs` on a successful open.
 ### Decoding
 
 OpStream stores and broadcasts raw event bytes only — there is no `decoded_json` column or
-field. Decoding lives entirely in op-index's `DECODER_REGISTRY` and is applied at read time on
+field. Decoding lives entirely in counter-index's `DECODER_REGISTRY` and is applied at read time on
 the raw `eventRaw` bytes. Register a decoder with `registerDecoder()` and it instantly
 applies to every subsequent event (and, for `DbEventSource`, every historical event in
 the archive — no rewrite needed).
@@ -137,7 +137,7 @@ Talks directly to any OPNET RPC node. No OpStream installation required — poin
 endpoint and you're indexing immediately.
 
 ```ts
-import { RpcEventSource } from '@opnet-collective/op-index';
+import { RpcEventSource } from '@counterfinance/counter-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = new RpcEventSource(
@@ -146,7 +146,7 @@ const source = new RpcEventSource(
 );
 ```
 
-op-index does not import from the `opnet` SDK directly. Instead it defines a minimal `BlockProvider`
+counter-index does not import from the `opnet` SDK directly. Instead it defines a minimal `BlockProvider`
 interface that `JSONRpcProvider` satisfies via TypeScript structural typing — no version coupling,
 no forced dependency.
 
@@ -192,7 +192,7 @@ Give `createEventSource` whatever you have. It probes for the fastest available 
 back automatically.
 
 ```ts
-import { createEventSource } from '@opnet-collective/op-index';
+import { createEventSource } from '@counterfinance/counter-index';
 import { JSONRpcProvider } from 'opnet';
 
 const source = await createEventSource({
@@ -222,7 +222,7 @@ it throws.
 You can call `probeOpStreamSchema` directly if you need to check readiness yourself:
 
 ```ts
-import { probeOpStreamSchema, openSqlite } from '@opnet-collective/op-index';
+import { probeOpStreamSchema, openSqlite } from '@counterfinance/counter-index';
 
 const ready = await probeOpStreamSchema(openSqlite('/data/opstream.db'));
 // → true if OpStream-ready, false otherwise
@@ -253,10 +253,10 @@ with `DbEventSource`, where the filter is pushed into the SQL `WHERE` clause.
 
 ## Sink connections
 
-The sink is where op-index writes your `opindex_*` tables. Open it independently of the source:
+The sink is where counter-index writes your `opindex_*` tables. Open it independently of the source:
 
 ```ts
-import { openSqlite } from '@opnet-collective/op-index';
+import { openSqlite } from '@counterfinance/counter-index';
 
 // SQLite
 const sink = openSqlite('/data/opindex.db');
@@ -271,5 +271,5 @@ Pass the sink to `createIndexer`:
 const indexer = await createIndexer({ schema, sink, source });
 ```
 
-op-index creates its tables on first run and does nothing on subsequent runs — `createIndexer` is
+counter-index creates its tables on first run and does nothing on subsequent runs — `createIndexer` is
 safe to call repeatedly against the same sink database.

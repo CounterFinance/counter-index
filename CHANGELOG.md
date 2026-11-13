@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `@opnet-collective/op-index` are documented here.
+All notable changes to `@counterfinance/counter-index` are documented here.
 
 ## [0.1.12-alpha.3] — 2026-04-22
 
@@ -16,7 +16,7 @@ All notable changes to `@opnet-collective/op-index` are documented here.
   Both `OpStreamRpcEventSource._subscribePoll()` and `DbEventSource.subscribe()` had bare
   `catch {}` blocks that swallowed every error silently. Any OpStream outage, network blip,
   or bad response was invisible — operators only saw "no handler activity recorded" hours
-  later. Now logs: `[op-index] subscribe poll error (will retry in Xs): <message>`.
+  later. Now logs: `[counter-index] subscribe poll error (will retry in Xs): <message>`.
 
 ## [0.1.12-alpha.2] — 2026-04-21
 
@@ -71,7 +71,7 @@ All notable changes to `@opnet-collective/op-index` are documented here.
 
 - **`IndexerLogger` interface** — five-level logger (`trace`/`debug`/`info`/`warn`/`error`)
   injectable via `createIndexer({ logger })`. Defaults to a no-op logger so existing
-  consumers are unaffected. `op-index` emits no `console.log` itself; all output is
+  consumers are unaffected. `counter-index` emits no `console.log` itself; all output is
   routed through the injected logger.
 
 - **`sync()` `knownTip` parameter** — `sync(from, to, filters?, knownTip?)` accepts the
@@ -136,7 +136,7 @@ All notable changes to `@opnet-collective/op-index` are documented here.
 ### Fixed
 
 - **`graphql-ws` peer dependency corrected to `^6.0.0`** — the declared peer dep was
-  `^5.0.0` but op-index imports from `'graphql-ws/use/ws'` which is the v6 path.
+  `^5.0.0` but counter-index imports from `'graphql-ws/use/ws'` which is the v6 path.
   Consumers installing `graphql-ws@6` no longer get a peer dep conflict warning.
 
 ## [0.1.5] — 2026-04-16

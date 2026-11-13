@@ -1,5 +1,5 @@
 /**
- * Live EVM dogfood: op-index indexing a real contract on an anvil devnet.
+ * Live EVM dogfood: counter-index indexing a real contract on an anvil devnet.
  *
  *   npm run dogfood:evm        # requires `anvil` on PATH (foundry)
  *
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
 
     const tip = Number(await pub.getBlockNumber());
 
-    // index with op-index
+    // index with counter-index
     const schema = defineSchema({ TokenHolder: { holder: { type: 'string' }, balance: { type: 'bigint' } } });
     const indexer = await createIndexer({ schema, sink: openSqlite(':memory:'),
       source: new EvmLogSource({ chainId: foundry.id, network: 'anvil', abi: ABI, client: pub, addresses: [token] }) });

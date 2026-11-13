@@ -1,11 +1,11 @@
 /**
- * op-index backfill micro-benchmark (honest, reproducible).
+ * counter-index backfill micro-benchmark (honest, reproducible).
  *
  *   npm run bench
  *
  * Streams N synthetic events through the full pipeline (source -> handlers ->
  * typed store -> SQLite) and reports events/sec, blocks/sec and peak RSS. These
- * are op-index's OWN numbers on this machine; for cross-tool comparison run the
+ * are counter-index's OWN numbers on this machine; for cross-tool comparison run the
  * standard harness at github.com/enviodev/open-indexer-benchmark (see
  * docs/benchmarks.md).
  */

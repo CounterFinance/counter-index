@@ -2,7 +2,7 @@
  * EventSource — the chain-neutral interface the indexer reads raw chain events
  * from. Core defines only the contract; each chain ships its own implementation
  * under `src/chains/<chain>/` (e.g. OPNET's DbEventSource, RpcEventSource;
- * EVM's EvmLogSource). The source is READ-ONLY — op-index never writes back
+ * EVM's EvmLogSource). The source is READ-ONLY — counter-index never writes back
  * through it.
  */
 

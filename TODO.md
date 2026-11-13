@@ -1,4 +1,4 @@
-# op-index — future work
+# counter-index — future work
 
 All previously-deferred items now live in the multichain roadmap and its tracked
 issues. See **[docs/multichain-roadmap.md](docs/multichain-roadmap.md)** (the

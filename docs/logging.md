@@ -1,6 +1,6 @@
 # Logging
 
-op-index logs through a small injectable interface, so it integrates with your
+counter-index logs through a small injectable interface, so it integrates with your
 stack two ways.
 
 ## 1. Bring your own logger
@@ -21,14 +21,14 @@ const logger = {
 const indexer = await createIndexer({ schema, sink, logger });
 ```
 
-The default is a no-op (op-index never decides your output medium).
+The default is a no-op (counter-index never decides your output medium).
 
 ## 2. Built-in structured logger (pino-compatible)
 
 `createLogger()` ships tidy logs with no dependency:
 
 ```ts
-import { createLogger } from '@opnet-collective/op-index';
+import { createLogger } from '@counterfinance/counter-index';
 const indexer = await createIndexer({ schema, sink, logger: createLogger({ level: 'info' }) });
 ```
 
