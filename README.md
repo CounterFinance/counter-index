@@ -4,6 +4,10 @@ Chain-neutral blockchain indexer framework. Define a schema, handle chain events
 derived state to SQLite or Postgres, and query it over GraphQL, REST, SQL-over-HTTP, and SSE,
 all auto-generated from your schema with zero codegen.
 
+> Formerly `@opnet-collective/op-index`. Renamed to `@counterfinance/counter-index` and moved to
+> the [CounterFinance](https://github.com/CounterFinance) org as the project generalized beyond
+> OPNET into an EVM-first, chain-neutral indexer.
+
 The core engine is chain-agnostic; each chain ships as a source adapter under
 `src/chains/<chain>`. Three adapters exist today, EVM-first: **EVM**
 (`EvmLogSource` / `EvmAbiDecoder`, via `eth_getLogs`, works against any JSON-RPC node),
