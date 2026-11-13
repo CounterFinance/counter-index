@@ -46,7 +46,7 @@ describe('crash during rollback → consistent (atomic)', () => {
     const flaky: MinimalDbAdapter = {
       dialect: inner.dialect,
       run: (sql, p) => {
-        if (armed && sql.includes('DELETE FROM opindex_journal')) throw new Error('crash mid-rollback');
+        if (armed && sql.includes('DELETE FROM counterindex_journal')) throw new Error('crash mid-rollback');
         return inner.run(sql, p);
       },
       get: (sql, p) => inner.get(sql, p),

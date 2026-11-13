@@ -216,8 +216,8 @@ round-trip is a full RTT.
 - [x] **CLI** `counter-index init` scaffolds a runnable project (tested; fixed a real
       bug, it scaffolded the wrong package name, so the dep wouldn't resolve).
 - [x] **Named-handler perf attribution** (#34): per-event latency in
-      `indexer.handlerStats()` + `/metrics` (`opindex_handler_calls{event}`,
-      `opindex_handler_ms_sum{event}`) + a **slow-handler WARN** over `slowHandlerMs`.
+      `indexer.handlerStats()` + `/metrics` (`counterindex_handler_calls{event}`,
+      `counterindex_handler_ms_sum{event}`) + a **slow-handler WARN** over `slowHandlerMs`.
 - [x] **Middleware/hooks**: `beforeBlock` (before events, in-tx) + `onBlock`
       (after) + an `onError` observer (fires on a handler error without swallowing
       it, the block still rolls back).

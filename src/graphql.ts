@@ -62,8 +62,8 @@ export interface ServeOptions {
   subscriptions?: boolean;
   /**
    * Provider for GET /health (JSON) and GET /metrics (Prometheus text). Numeric
-   * values become `opindex_<key>` gauges; a nested object becomes labelled
-   * gauges `opindex_<key>{key="<sub>"}`. Booleans map to 0/1.
+   * values become `counterindex_<key>` gauges; a nested object becomes labelled
+   * gauges `counterindex_<key>{key="<sub>"}`. Booleans map to 0/1.
    */
   status?: () => Record<string, unknown>;
   /** Max rows a connection's `first` can return. Default 1000. */
@@ -113,20 +113,20 @@ const HEALTH_STATES = ['starting', 'backfilling', 'live', 'degraded', 'stalled',
 function renderMetrics(status: Record<string, unknown>): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(status)) {
-    if (typeof v === 'number') { lines.push(`opindex_${k} ${v}`); continue; }
-    if (typeof v === 'boolean') { lines.push(`opindex_${k} ${v ? 1 : 0}`); continue; }
+    if (typeof v === 'number') { lines.push(`counterindex_${k} ${v}`); continue; }
+    if (typeof v === 'boolean') { lines.push(`counterindex_${k} ${v ? 1 : 0}`); continue; }
     if (k === 'health' && v && typeof v === 'object') { renderHealth(v as HealthLike, lines); continue; }
-    if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('opindex_handler_latency_ms', v as HistogramLike, lines); continue; }
+    if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('counterindex_handler_latency_ms', v as HistogramLike, lines); continue; }
     if (k === 'handlersByEvent' && v && typeof v === 'object') {
       for (const [event, s] of Object.entries(v as Record<string, { calls?: number; sumMs?: number }>)) {
-        if (typeof s?.calls === 'number') lines.push(`opindex_handler_calls{event="${event}"} ${s.calls}`);
-        if (typeof s?.sumMs === 'number') lines.push(`opindex_handler_ms_sum{event="${event}"} ${s.sumMs}`);
+        if (typeof s?.calls === 'number') lines.push(`counterindex_handler_calls{event="${event}"} ${s.calls}`);
+        if (typeof s?.sumMs === 'number') lines.push(`counterindex_handler_ms_sum{event="${event}"} ${s.sumMs}`);
       }
       continue;
     }
     if (v && typeof v === 'object') {
       for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
-        if (typeof v2 === 'number') lines.push(`opindex_${k}{key="${k2}"} ${v2}`);
+        if (typeof v2 === 'number') lines.push(`counterindex_${k}{key="${k2}"} ${v2}`);
       }
     }
   }
@@ -135,14 +135,14 @@ function renderMetrics(status: Record<string, unknown>): string {
 
 function renderHealth(h: HealthLike, lines: string[]): void {
   // state as a one-hot gauge so Prometheus can alert on `== "stalled"`.
-  for (const s of HEALTH_STATES) lines.push(`opindex_health_state{state="${s}"} ${h.state === s ? 1 : 0}`);
-  if (typeof h.uptimeMs === 'number') lines.push(`opindex_uptime_ms ${h.uptimeMs}`);
-  if (typeof h.reorgs === 'number') lines.push(`opindex_reorgs_total ${h.reorgs}`);
-  if (typeof h.errors === 'number') lines.push(`opindex_errors_total ${h.errors}`);
+  for (const s of HEALTH_STATES) lines.push(`counterindex_health_state{state="${s}"} ${h.state === s ? 1 : 0}`);
+  if (typeof h.uptimeMs === 'number') lines.push(`counterindex_uptime_ms ${h.uptimeMs}`);
+  if (typeof h.reorgs === 'number') lines.push(`counterindex_reorgs_total ${h.reorgs}`);
+  if (typeof h.errors === 'number') lines.push(`counterindex_errors_total ${h.errors}`);
   for (const c of h.chains ?? []) {
-    if (typeof c.blocksBehind === 'number') lines.push(`opindex_chain_blocks_behind{chain="${c.chainId}"} ${c.blocksBehind}`);
-    if (typeof c.lastBlock === 'number') lines.push(`opindex_chain_last_block{chain="${c.chainId}"} ${c.lastBlock}`);
-    if (typeof c.idleMs === 'number') lines.push(`opindex_chain_idle_ms{chain="${c.chainId}"} ${c.idleMs}`);
+    if (typeof c.blocksBehind === 'number') lines.push(`counterindex_chain_blocks_behind{chain="${c.chainId}"} ${c.blocksBehind}`);
+    if (typeof c.lastBlock === 'number') lines.push(`counterindex_chain_last_block{chain="${c.chainId}"} ${c.lastBlock}`);
+    if (typeof c.idleMs === 'number') lines.push(`counterindex_chain_idle_ms{chain="${c.chainId}"} ${c.idleMs}`);
   }
 }
 

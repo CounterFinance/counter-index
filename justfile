@@ -27,7 +27,7 @@ scaffold name="my-indexer":
     set -euo pipefail
 
     DEST="../{{name}}"
-    OPINDEX_REL="../counter-index"   # relative from the new project to counter-index
+    COUNTERINDEX_REL="../counter-index"   # relative from the new project to counter-index
 
     if [ -d "$DEST" ]; then
         echo "${RED}✘  $DEST already exists — choose a different name${RESET}"
@@ -89,12 +89,12 @@ scaffold name="my-indexer":
     	# OpStream source database (SQLite — different file from sink)
     	OPSTREAM_DB_PATH=../OpStream/data/opstream.db
 
-    	# This indexer's own database (sink — opindex_* tables)
-    	OPINDEX_DB_PATH=data/opindex.db
+    	# This indexer's own database (sink — counterindex_* tables)
+    	COUNTERINDEX_DB_PATH=data/counterindex.db
 
     	# Postgres alternative (set both to override SQLite paths above):
     	# OPSTREAM_DB_URL=postgres://user:pass@localhost:5432/opstream
-    	# OPINDEX_DB_URL=postgres://user:pass@localhost:5432/opstream
+    	# COUNTERINDEX_DB_URL=postgres://user:pass@localhost:5432/opstream
 
     	# Backfill starting block
     	FROM_BLOCK=941400
@@ -159,7 +159,7 @@ scaffold name="my-indexer":
     	/**
     	 * Indexer entry point.
     	 *
-    	 * 1. Define your schema (entities → opindex_* SQL tables).
+    	 * 1. Define your schema (entities → counterindex_* SQL tables).
     	 * 2. Open source (OpStream DB) and sink (this indexer's DB).
     	 * 3. Register event handlers.
     	 * 4. Backfill historical blocks, then go live.
@@ -186,14 +186,14 @@ scaffold name="my-indexer":
 
     	// ── Config ────────────────────────────────────────────────────────────────────
     	const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '../OpStream/data/opstream.db';
-    	const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? 'data/opindex.db';
+    	const COUNTERINDEX_DB  = process.env['COUNTERINDEX_DB_PATH']  ?? 'data/counterindex.db';
     	const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? 941400);
 
     	// ── Connections ───────────────────────────────────────────────────────────────
     	// source — read-only, points at OpStream's database
-    	// sink   — this indexer's own database (opindex_* tables)
+    	// sink   — this indexer's own database (counterindex_* tables)
     	const source = new DbEventSource(openSqlite(OPSTREAM_DB));
-    	const sink   = openSqlite(OPINDEX_DB);
+    	const sink   = openSqlite(COUNTERINDEX_DB);
 
     	// ── Indexer ───────────────────────────────────────────────────────────────────
     	const indexer = await createIndexer({ schema, sink, source });
@@ -282,7 +282,7 @@ scaffold name="my-indexer":
     	    env_file: .env
     	    environment:
     	      OPSTREAM_DB_PATH: /app/data/opstream.db
-    	      OPINDEX_DB_PATH:  /app/data/opindex.db
+    	      COUNTERINDEX_DB_PATH:  /app/data/counterindex.db
     	    volumes:
     	      - chain_data:/app/data
     	    depends_on:

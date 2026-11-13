@@ -20,7 +20,7 @@ with **zero handler changes**: the subtlety the roadmap flagged (store deltas,
 not absolutes) is sidestepped by snapshotting prior state instead of deltas.
 
 ## Journal
-`opindex_journal(seq PK autoincrement, chain_id, block_number, entity, id, prior_json)`
+`counterindex_journal(seq PK autoincrement, chain_id, block_number, entity, id, prior_json)`
 - `prior_json` is the JSON of the row before the write, or `NULL` if it did not
 exist. One append per write (set/update/delete). Pruned below the finality depth.
 
@@ -32,7 +32,7 @@ to the journal, then perform the write, all inside the existing per-block
 
 ## Fork detection (live)
 Every `ChainEvent` carries `blockHash` + `parentHash`. We keep a small per-chain
-block-hash log (`opindex_blockhash(chain_id, block_number, block_hash)`) for the
+block-hash log (`counterindex_blockhash(chain_id, block_number, block_hash)`) for the
 last `finalityDepth` blocks. On a new block `N` whose `parentHash` ≠ the stored
 hash of `N-1`, walk back comparing hashes until the fork block `F` (hashes agree);
 `rollbackToBlock(F)`, rewind checkpoint, and re-sync from `F+1`.

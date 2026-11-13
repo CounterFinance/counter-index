@@ -44,7 +44,7 @@ describe('incremental migration', () => {
     const schema = defineSchema({ X: { v: { type: 'int' } } }) as Schema<SchemaDefinition>;
     await createStore(schema, adapter);
     await createStore(schema, adapter);   // must not throw
-    const cols = (db.prepare('PRAGMA table_info("opindex_x")').all() as Array<{ name: string }>).map((r) => r.name);
+    const cols = (db.prepare('PRAGMA table_info("counterindex_x")').all() as Array<{ name: string }>).map((r) => r.name);
     expect(cols).toEqual(['id', 'v']);
   });
 });

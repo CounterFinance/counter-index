@@ -66,8 +66,8 @@ All notable changes to `@counterfinance/counter-index` are documented here.
     active backfill. Use this to distinguish **backfilling** from **live** mode at a glance.
   - `hasIndexingErrors` — always `false` for now; reserved for handler-error tracking.
 
-- **`opindex_meta` checkpoint table** — persisted atomically with block writes. On restart
-  the indexer resumes from `opindex_meta.last_block + 1` automatically.
+- **`counterindex_meta` checkpoint table** — persisted atomically with block writes. On restart
+  the indexer resumes from `counterindex_meta.last_block + 1` automatically.
 
 - **`IndexerLogger` interface** — five-level logger (`trace`/`debug`/`info`/`warn`/`error`)
   injectable via `createIndexer({ logger })`. Defaults to a no-op logger so existing
@@ -93,7 +93,7 @@ All notable changes to `@counterfinance/counter-index` are documented here.
 
 ### Fixed
 
-- **`opindex_meta` integer overflow on Postgres** — `updated_at` and `last_block_ts` now
+- **`counterindex_meta` integer overflow on Postgres** — `updated_at` and `last_block_ts` now
   use `BIGINT` instead of `INTEGER`. `Date.now()` (~1.78 × 10¹² in 2026) overflows
   Postgres `int4` (~2.1 × 10⁹).
 - **Postgres `NOTICE` spam** — `openPostgres()` now sets `onnotice: () => {}` to suppress

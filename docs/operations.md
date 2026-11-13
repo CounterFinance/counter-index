@@ -35,26 +35,26 @@ await createIndexer({
 ## Metrics (`GET /metrics`, Prometheus text format)
 
 ```
-opindex_blocksProcessed 1041
-opindex_eventsProcessed 51233
-opindex_entitiesWritten 51233
-opindex_reorgs_total 0
-opindex_errors_total 0
-opindex_uptime_ms 3600123
-opindex_health_state{state="live"} 1          # one-hot gauge, alert on == "stalled"
-opindex_health_state{state="stalled"} 0
-opindex_chain_blocks_behind{chain="1"} 0      # per-chain lag
-opindex_chain_last_block{chain="1"} 21034111
-opindex_chain_idle_ms{chain="1"} 812
-opindex_handler_latency_ms_bucket{le="5"} 50891   # handler latency histogram
-opindex_handler_latency_ms_bucket{le="+Inf"} 51233
-opindex_handler_latency_ms_count 51233
-opindex_handler_latency_ms_sum 48210
-opindex_writesByTable{key="Transfer"} 51233
+counterindex_blocksProcessed 1041
+counterindex_eventsProcessed 51233
+counterindex_entitiesWritten 51233
+counterindex_reorgs_total 0
+counterindex_errors_total 0
+counterindex_uptime_ms 3600123
+counterindex_health_state{state="live"} 1          # one-hot gauge, alert on == "stalled"
+counterindex_health_state{state="stalled"} 0
+counterindex_chain_blocks_behind{chain="1"} 0      # per-chain lag
+counterindex_chain_last_block{chain="1"} 21034111
+counterindex_chain_idle_ms{chain="1"} 812
+counterindex_handler_latency_ms_bucket{le="5"} 50891   # handler latency histogram
+counterindex_handler_latency_ms_bucket{le="+Inf"} 51233
+counterindex_handler_latency_ms_count 51233
+counterindex_handler_latency_ms_sum 48210
+counterindex_writesByTable{key="Transfer"} 51233
 ```
 
-Useful alerts: `opindex_health_state{state="stalled"} == 1`,
-`opindex_chain_blocks_behind > <N>`, `rate(opindex_errors_total[5m]) > 0`, and a
+Useful alerts: `counterindex_health_state{state="stalled"} == 1`,
+`counterindex_chain_blocks_behind > <N>`, `rate(counterindex_errors_total[5m]) > 0`, and a
 latency SLO from the histogram (`histogram_quantile(0.99, ...)`).
 
 ## Graceful shutdown

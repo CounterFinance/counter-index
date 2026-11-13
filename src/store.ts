@@ -1,7 +1,7 @@
 /**
  * Entity store — DB-backed indexed data store.
  *
- * Each entity defined in the schema gets its own `opindex_<entity>` table
+ * Each entity defined in the schema gets its own `counterindex_<entity>` table
  * (lowercase). Tables are created automatically when the store is initialised.
  * All operations are async — the underlying adapter may be synchronous SQLite
  * or async Postgres; callers don't need to know which.
@@ -9,7 +9,7 @@
  * BigInt fields are serialised as decimal strings (TEXT) since SQL has no
  * native bigint type. They are deserialised back to BigInt on read.
  *
- * Table prefix `opindex_` prevents collisions with OpStream's raw tables when
+ * Table prefix `counterindex_` prevents collisions with OpStream's raw tables when
  * both use the same database.
  */
 
@@ -143,13 +143,13 @@ export interface EntityStore {
    * Write or advance the indexed checkpoint for this block.
    * MUST be called as the LAST operation inside the same adapter.transaction()
    * that wraps all entity writes for the block. This guarantees that
-   * opindex_meta.last_block only advances when every entity write for the block
+   * counterindex_meta.last_block only advances when every entity write for the block
    * has committed — making the meta value safe to resume from.
    */
   writeBlockCheckpoint(blockNumber: number, tipBlock?: number, blockTimestamp?: number, chainId?: number): Promise<void>;
 
   /**
-   * Read the current indexed checkpoint from opindex_meta.
+   * Read the current indexed checkpoint from counterindex_meta.
    * Returns undefined if no block has been checkpointed yet.
    */
   readCheckpoint(chainId?: number): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
@@ -257,7 +257,7 @@ export interface TypedStore<S extends SchemaDefinition = SchemaDefinition> {
 // SQL type mapping
 // ---------------------------------------------------------------------------
 
-const TABLE_PREFIX = 'opindex_';
+const TABLE_PREFIX = 'counterindex_';
 
 function fieldTypeSql(type: FieldType, dialect: 'sqlite' | 'postgres'): string {
   switch (type) {
@@ -479,7 +479,7 @@ export async function createStore(
   // and updated_at is Date.now() (ms since epoch, ~1.78T in 2026).
   const intType = dialect === 'postgres' ? 'BIGINT' : 'INTEGER';
   await adapter.exec(`
-    CREATE TABLE IF NOT EXISTS opindex_meta (
+    CREATE TABLE IF NOT EXISTS counterindex_meta (
       id             TEXT     NOT NULL PRIMARY KEY,
       last_block     ${intType} NOT NULL,
       tip_block      ${intType},
@@ -489,7 +489,7 @@ export async function createStore(
   `);
   // Migration for existing tables that predate the last_block_ts column.
   try {
-    await adapter.exec(`ALTER TABLE opindex_meta ADD COLUMN last_block_ts ${intType}`);
+    await adapter.exec(`ALTER TABLE counterindex_meta ADD COLUMN last_block_ts ${intType}`);
   } catch {
     // Column already exists — safe to ignore.
   }
@@ -497,7 +497,7 @@ export async function createStore(
   // Reorg journal (prior-row snapshots) + canonical block-hash log.
   const serial = dialect === 'postgres' ? 'BIGSERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
   await adapter.exec(`
-    CREATE TABLE IF NOT EXISTS opindex_journal (
+    CREATE TABLE IF NOT EXISTS counterindex_journal (
       seq          ${serial},
       chain_id     ${intType} NOT NULL,
       block_number ${intType} NOT NULL,
@@ -507,7 +507,7 @@ export async function createStore(
     )
   `);
   await adapter.exec(`
-    CREATE TABLE IF NOT EXISTS opindex_blockhash (
+    CREATE TABLE IF NOT EXISTS counterindex_blockhash (
       chain_id     ${intType} NOT NULL,
       block_number ${intType} NOT NULL,
       block_hash   TEXT NOT NULL,
@@ -538,7 +538,7 @@ export async function createStore(
     const priorJson = prior ? JSON.stringify(prior, bufReplace) : null;
     const ph = paramList(dialect, 5).join(', ');
     await adapter.run(
-      `INSERT INTO opindex_journal (chain_id, block_number, entity, entity_id, prior_json) VALUES (${ph})`,
+      `INSERT INTO counterindex_journal (chain_id, block_number, entity, entity_id, prior_json) VALUES (${ph})`,
       [curChainId, curBlock, entity, physicalId, priorJson],
     );
   }
@@ -571,12 +571,12 @@ export async function createStore(
     const metaId = checkpointId(metaChainId);
     if (dialect === 'sqlite') {
       await adapter.run(
-        `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO counterindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
         [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
       );
     } else {
       await adapter.run(
-        `INSERT INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
+        `INSERT INTO counterindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (id) DO UPDATE SET
            last_block = EXCLUDED.last_block, tip_block = EXCLUDED.tip_block,
@@ -987,7 +987,7 @@ export async function createStore(
 
     async readCheckpoint(chainId) {
       const row = await adapter.get<{ last_block: number; tip_block: number | null; last_block_ts: number | null }>(
-        `SELECT last_block, tip_block, last_block_ts FROM opindex_meta WHERE id = ${param(dialect, 1)}`,
+        `SELECT last_block, tip_block, last_block_ts FROM counterindex_meta WHERE id = ${param(dialect, 1)}`,
         [checkpointId(chainId)],
       );
       if (!row) return undefined;
@@ -1015,7 +1015,7 @@ export async function createStore(
       // (one row per processed block) and pruned together with the journal, so
       // its oldest row marks the retained floor.
       const floorRow = await adapter.get<{ m: number | string | null }>(
-        `SELECT MIN(block_number) AS m FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)}`,
+        `SELECT MIN(block_number) AS m FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)}`,
         [chainId],
       );
       const floor = floorRow?.m != null ? Number(floorRow.m) : null;
@@ -1033,7 +1033,7 @@ export async function createStore(
         // restoring each prior row (last restore wins) leaves each entity at its
         // state as of `blockNumber`. prior_json === null means "did not exist".
         const entries = await adapter.all<{ entity: string; entity_id: string; prior_json: string | null }>(
-          `SELECT entity, entity_id, prior_json FROM opindex_journal
+          `SELECT entity, entity_id, prior_json FROM counterindex_journal
            WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}
            ORDER BY seq DESC`,
           [chainId, blockNumber],
@@ -1047,11 +1047,11 @@ export async function createStore(
           }
         }
         await adapter.run(
-          `DELETE FROM opindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+          `DELETE FROM counterindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
           [chainId, blockNumber],
         );
         await adapter.run(
-          `DELETE FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+          `DELETE FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
           [chainId, blockNumber],
         );
         await writeCheckpointRow(blockNumber, undefined, undefined, multichain ? chainId : undefined);
@@ -1061,12 +1061,12 @@ export async function createStore(
     async recordBlockHash(chainId, blockNumber, blockHash) {
       if (dialect === 'sqlite') {
         await adapter.run(
-          `INSERT OR REPLACE INTO opindex_blockhash (chain_id, block_number, block_hash) VALUES (?, ?, ?)`,
+          `INSERT OR REPLACE INTO counterindex_blockhash (chain_id, block_number, block_hash) VALUES (?, ?, ?)`,
           [chainId, blockNumber, blockHash],
         );
       } else {
         await adapter.run(
-          `INSERT INTO opindex_blockhash (chain_id, block_number, block_hash) VALUES ($1, $2, $3)
+          `INSERT INTO counterindex_blockhash (chain_id, block_number, block_hash) VALUES ($1, $2, $3)
            ON CONFLICT (chain_id, block_number) DO UPDATE SET block_hash = EXCLUDED.block_hash`,
           [chainId, blockNumber, blockHash],
         );
@@ -1075,7 +1075,7 @@ export async function createStore(
 
     async getBlockHash(chainId, blockNumber) {
       const row = await adapter.get<{ block_hash: string }>(
-        `SELECT block_hash FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number = ${param(dialect, 2)}`,
+        `SELECT block_hash FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number = ${param(dialect, 2)}`,
         [chainId, blockNumber],
       );
       return row?.block_hash;
@@ -1083,11 +1083,11 @@ export async function createStore(
 
     async pruneReorgData(chainId, belowBlock) {
       await adapter.run(
-        `DELETE FROM opindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
+        `DELETE FROM counterindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
         [chainId, belowBlock],
       );
       await adapter.run(
-        `DELETE FROM opindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
+        `DELETE FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
         [chainId, belowBlock],
       );
     },

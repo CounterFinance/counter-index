@@ -20,21 +20,21 @@ describe('secondary indexes', () => {
     const schema = defineSchema({
       Holder: { token: { type: 'string', index: true }, holder: { type: 'string', index: true }, bal: { type: 'bigint' } },
     }) as Schema<SchemaDefinition>;
-    const idx = await indexesFor('opindex_holder', schema);
-    expect(idx).toContain('opindex_holder_token_idx');
-    expect(idx).toContain('opindex_holder_holder_idx');
-    expect(idx).not.toContain('opindex_holder_bal_idx');   // not marked → no index
+    const idx = await indexesFor('counterindex_holder', schema);
+    expect(idx).toContain('counterindex_holder_token_idx');
+    expect(idx).toContain('counterindex_holder_holder_idx');
+    expect(idx).not.toContain('counterindex_holder_bal_idx');   // not marked → no index
   });
 
   it('auto-indexes chainId in a multichain schema', async () => {
     const schema = defineSchema({ Thing: { v: { type: 'int' } } }, { multichain: true }) as Schema<SchemaDefinition>;
-    const idx = await indexesFor('opindex_thing', schema);
-    expect(idx).toContain('opindex_thing_chainid_idx');
+    const idx = await indexesFor('counterindex_thing', schema);
+    expect(idx).toContain('counterindex_thing_chainid_idx');
   });
 
   it('single-chain schema has no chainId index', async () => {
     const schema = defineSchema({ Thing: { v: { type: 'int' } } }) as Schema<SchemaDefinition>;
-    const idx = await indexesFor('opindex_thing', schema);
+    const idx = await indexesFor('counterindex_thing', schema);
     expect(idx).toHaveLength(0);
   });
 });

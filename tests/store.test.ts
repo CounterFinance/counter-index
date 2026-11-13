@@ -36,15 +36,15 @@ describe('createStore', () => {
     await expect(createStore(schema, adapter)).resolves.toBeDefined();
   });
 
-  it('creates opindex_* prefixed tables', async () => {
+  it('creates counterindex_* prefixed tables', async () => {
     await createStore(schema, adapter);
     const raw = (adapter as SqliteAdapter).rawDb;
     const tables = raw.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'opindex_%'`,
+      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'counterindex_%'`,
     ).all() as Array<{ name: string }>;
     const names = tables.map((t) => t.name);
-    expect(names).toContain('opindex_account');
-    expect(names).toContain('opindex_transfer');
+    expect(names).toContain('counterindex_account');
+    expect(names).toContain('counterindex_transfer');
   });
 
   it('is idempotent — creating twice does not throw', async () => {

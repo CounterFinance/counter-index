@@ -40,13 +40,13 @@ describe('observability', () => {
       expect(health['eventsProcessed']).toBe(3);
 
       const metrics = await (await fetch('http://localhost:47900/metrics')).text();
-      expect(metrics).toContain('opindex_entitiesWritten 3');
-      expect(metrics).toContain('opindex_blocksProcessed 1');
-      expect(metrics).toContain('opindex_writesByTable{key="Thing"} 3');
+      expect(metrics).toContain('counterindex_entitiesWritten 3');
+      expect(metrics).toContain('counterindex_blocksProcessed 1');
+      expect(metrics).toContain('counterindex_writesByTable{key="Thing"} 3');
       // M18 series: one-hot health state gauge + handler-latency histogram.
-      expect(metrics).toContain('opindex_health_state{state="backfilling"} 1');
-      expect(metrics).toContain('opindex_health_state{state="live"} 0');
-      expect(metrics).toContain('opindex_handler_latency_ms_count 3');
+      expect(metrics).toContain('counterindex_health_state{state="backfilling"} 1');
+      expect(metrics).toContain('counterindex_health_state{state="live"} 0');
+      expect(metrics).toContain('counterindex_handler_latency_ms_count 3');
     } finally {
       await handle.stop();
     }
