@@ -3,7 +3,7 @@
 A complete counter-index app in ~120 lines: index ERC-20 `Transfer` logs from any EVM
 chain into **running holder balances** + a **transfer log**, served over GraphQL.
 
-It's the "one framework, many chains" proof — the same schema → handlers →
+It's the "one framework, many chains" proof, the same schema → handlers →
 GraphQL shape the OPNET app used, now pointed at EVM through `EvmLogSource`, with
 a schema-typed store (the handler writes rows with **no casts**).
 
@@ -38,7 +38,7 @@ const indexer = await buildPortfolioIndexer({
   chainId: 1,
   network: 'eth-mainnet',
   rpcUrl:  process.env.ETH_RPC_URL,          // any EVM RPC
-  tokens:  ['0xA0b8…', '0xdAC1…'],            // token contracts to index
+  tokens:  ['0xA0b8...', '0xdAC1...'],            // token contracts to index
   dbPath:  './portfolio.db',                 // persist (omit for in-memory)
 });
 await indexer.sync(fromBlock, await currentBlock);
@@ -55,7 +55,7 @@ await indexer.serve({ port: 4000 });          // GraphQL at :4000/graphql
 } }
 
 # A token's transfer log
-{ tokenTransfers(where: { token: "0x…" }, orderBy: block, orderDirection: desc) {
+{ tokenTransfers(where: { token: "0x..." }, orderBy: block, orderDirection: desc) {
     totalCount
     nodes { from to value block }
 } }
@@ -65,7 +65,7 @@ await indexer.serve({ port: 4000 });          // GraphQL at :4000/graphql
 
 Swap `buildPortfolioIndexer` for `createMultiIndexer` with a `{ multichain: true }`
 schema and one `EvmLogSource` per chain to index several chains into one store and
-filter by `chainId` — see `src/multiIndexer.ts` and `tests/multiIndexer.test.ts`.
+filter by `chainId`: see `src/multiIndexer.ts` and `tests/multiIndexer.test.ts`.
 
 ## Extending to ERC-721
 

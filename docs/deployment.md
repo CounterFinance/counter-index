@@ -1,6 +1,6 @@
 # Deployment
 
-counter-index is a library — it has no entry point of its own. You deploy *your indexer app*, which
+counter-index is a library, it has no entry point of its own. You deploy *your indexer app*, which
 imports counter-index and wires everything together. This guide covers the recommended way to do that
 with Docker and docker-compose.
 
@@ -35,20 +35,20 @@ npx @counterfinance/counter-index init my-indexer
 cd my-indexer && npm install && npm run dev
 ```
 
-No monorepo required — works anywhere Node ≥ 24 and npx are available.
+No monorepo required, works anywhere Node ≥ 24 and npx are available.
 
 If you are working inside the counter-index monorepo, the `just scaffold` command does the same thing:
 
 ```bash
 cd counter-index
 just scaffold my-indexer
-# Creates ../my-indexer/ — identical output
+# Creates ../my-indexer/, identical output
 ```
 
 ## Dockerfile
 
 counter-index ships a two-stage `Dockerfile` template. Stage 1 compiles TypeScript and builds native
-modules; stage 2 runs only the compiled output — no build tools or TypeScript compiler in
+modules; stage 2 runs only the compiled output, no build tools or TypeScript compiler in
 production.
 
 Copy it to your indexer root (no modifications needed for a standard layout):
@@ -125,7 +125,7 @@ volumes:
   chain_data:
 ```
 
-SQLite: both services mount the same named volume — `opstream.db` and `opindex.db` live side by side.
+SQLite: both services mount the same named volume, `opstream.db` and `opindex.db` live side by side.
 
 For Postgres, add the bundled Postgres profile:
 
@@ -181,13 +181,13 @@ const PORT        = Number(process.env['PORT']        ?? '4000');
 
 ## Production checklist
 
-- **Separate source and sink databases** — OpStream writes to `opstream.db` continuously;
+- **Separate source and sink databases**: OpStream writes to `opstream.db` continuously;
   keeping `opindex.db` separate prevents write contention.
-- **Run behind a reverse proxy** — nginx, Caddy, or Cloudflare in front of port 4000 gives you
+- **Run behind a reverse proxy**: nginx, Caddy, or Cloudflare in front of port 4000 gives you
   TLS, rate limiting, and origin-restricted CORS without changing counter-index's configuration.
-- **Mount volumes on fast storage** — SQLite is extremely fast on SSDs; avoid network-attached
+- **Mount volumes on fast storage**: SQLite is extremely fast on SSDs; avoid network-attached
   storage for the database files.
-- **Handle `SIGTERM` cleanly** — call `stop()` on your subscribe handle and the GraphQL server
+- **Handle `SIGTERM` cleanly**: call `stop()` on your subscribe handle and the GraphQL server
   handle so in-flight requests drain before the process exits:
 
 ```ts
@@ -208,4 +208,4 @@ npm run test:watch    # watch mode
 npx tsc --noEmit      # type-check only
 ```
 
-No database setup needed — tests use an in-memory SQLite adapter.
+No database setup needed, tests use an in-memory SQLite adapter.

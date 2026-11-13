@@ -1,10 +1,11 @@
 /**
- * @counterfinance/counter-index — chain-neutral indexer framework.
+ * @counterfinance/counter-index: chain-neutral indexer framework.
  *
  * Define a schema. Register event handlers. Feed chain data from a source
  * adapter via sync() or subscribe(). Query your indexed entities over an
- * auto-generated GraphQL API. The core is chain-neutral; each chain ships as an
- * adapter under `./chains/<chain>`. OPNET is the first adapter.
+ * auto-generated GraphQL API (plus REST, SQL-over-HTTP, and SSE). The core is
+ * chain-neutral; each chain ships as an adapter under `./chains/<chain>`. EVM,
+ * Solana, and OPNET adapters ship in the box.
  */
 
 // --- Core framework (chain-neutral) ----------------------------------------
