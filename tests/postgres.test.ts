@@ -169,7 +169,7 @@ describe('Postgres parameter placeholders', () => {
   it('uses sequential $N in UPDATE', async () => {
     const store = await createStore(schema, adapter);
     // Prime the GET so the update existence check passes
-    adapter.respondWhen('opindex_account', {
+    adapter.respondWhen('counterindex_account', {
       id: 'bob', address: '0xb', balance: '0', active: false, txCount: 0, score: 0,
     });
     adapter.clear();
@@ -279,7 +279,7 @@ describe('Postgres int field normalisation on read', () => {
   // JS numbers on any dialect, not strings.
   it('deserialises int fields as JS number, not string from pg', async () => {
     adapter.respondWhen(
-      'SELECT * FROM opindex_account WHERE',
+      'SELECT * FROM counterindex_account WHERE',
       { id: 'alice', address: '0xa', balance: '0', active: true, txCount: '5', score: 1.5 },
     );
     const store = await createStore(schema, adapter);
@@ -293,7 +293,7 @@ describe('Postgres int field normalisation on read', () => {
 
   it('deserialises float fields as JS number', async () => {
     adapter.respondWhen(
-      'SELECT * FROM opindex_account WHERE',
+      'SELECT * FROM counterindex_account WHERE',
       { id: 'alice', address: '0xa', balance: '0', active: true, txCount: '0', score: '1.5' },
     );
     const store = await createStore(schema, adapter);

@@ -109,14 +109,14 @@ returns `undefined`. Over GraphQL it serialises as `null`.
 
 ## SQL table names
 
-counter-index prefixes every table with `opindex_` (lowercased entity name) to avoid collisions with
+counter-index prefixes every table with `counterindex_` (lowercased entity name) to avoid collisions with
 OpStream's raw tables when both live in the same database:
 
 | Entity | Table |
 |---|---|
-| `Pool` | `opindex_pool` |
-| `Transfer` | `opindex_transfer` |
-| `LiquidityPosition` | `opindex_liquidityposition` |
+| `Pool` | `counterindex_pool` |
+| `Transfer` | `counterindex_transfer` |
+| `LiquidityPosition` | `counterindex_liquidityposition` |
 
 Tables are created with `CREATE TABLE IF NOT EXISTS`: running `createIndexer()` multiple times
 on the same database is safe and idempotent.

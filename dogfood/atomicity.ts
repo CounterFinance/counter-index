@@ -20,7 +20,7 @@ import Database from 'better-sqlite3';
 
 const TO = 60, EPB = 10, HOLDERS = 20, TOTAL = TO * EPB;   // 600 events
 const TSX = 'node_modules/.bin/tsx';
-const dir = mkdtempSync(join(tmpdir(), 'opindex-atomicity-'));
+const dir = mkdtempSync(join(tmpdir(), 'counterindex-atomicity-'));
 const GOLDEN = join(dir, 'golden.db');
 const CRASH = join(dir, 'crash.db');
 
@@ -35,7 +35,7 @@ function run(db: string, crashAt: number): number {
 function dump(db: string): string {
   const d = new Database(db, { readonly: true });
   try {
-    const rows = d.prepare('SELECT holder, n FROM opindex_balance ORDER BY holder').all();
+    const rows = d.prepare('SELECT holder, n FROM counterindex_balance ORDER BY holder').all();
     return JSON.stringify(rows);
   } catch { return '{}'; } finally { d.close(); }
 }

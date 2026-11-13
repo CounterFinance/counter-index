@@ -87,7 +87,7 @@ describe('createMultiIndexer', () => {
     });
     await mi.syncAll();
 
-    const meta = await sink.all<{ id: string; last_block: number }>('SELECT id, last_block FROM opindex_meta ORDER BY id');
+    const meta = await sink.all<{ id: string; last_block: number }>('SELECT id, last_block FROM counterindex_meta ORDER BY id');
     const ids = meta.map((m) => m.id);
     expect(ids).toContain('chain:1');
     expect(ids).toContain('chain:2');

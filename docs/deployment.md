@@ -114,7 +114,7 @@ services:
       - chain_data:/data
     environment:
       - OPSTREAM_DB_PATH=/data/opstream.db
-      - OPINDEX_DB_PATH=/data/opindex.db
+      - COUNTERINDEX_DB_PATH=/data/counterindex.db
       - FROM_BLOCK=941400
     ports:
       - "4000:4000"   # GraphQL API
@@ -125,7 +125,7 @@ volumes:
   chain_data:
 ```
 
-SQLite: both services mount the same named volume, `opstream.db` and `opindex.db` live side by side.
+SQLite: both services mount the same named volume, `opstream.db` and `counterindex.db` live side by side.
 
 For Postgres, add the bundled Postgres profile:
 
@@ -174,7 +174,7 @@ Recommended environment variable conventions for your `src/main.ts`:
 
 ```ts
 const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '/data/opstream.db';
-const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? '/data/opindex.db';
+const COUNTERINDEX_DB  = process.env['COUNTERINDEX_DB_PATH']  ?? '/data/counterindex.db';
 const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? '941400');
 const PORT        = Number(process.env['PORT']        ?? '4000');
 ```
@@ -182,7 +182,7 @@ const PORT        = Number(process.env['PORT']        ?? '4000');
 ## Production checklist
 
 - **Separate source and sink databases**: OpStream writes to `opstream.db` continuously;
-  keeping `opindex.db` separate prevents write contention.
+  keeping `counterindex.db` separate prevents write contention.
 - **Run behind a reverse proxy**: nginx, Caddy, or Cloudflare in front of port 4000 gives you
   TLS, rate limiting, and origin-restricted CORS without changing counter-index's configuration.
 - **Mount volumes on fast storage**: SQLite is extremely fast on SSDs; avoid network-attached

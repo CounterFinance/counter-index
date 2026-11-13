@@ -1,7 +1,7 @@
 /**
- * opindex_meta atomicity tests.
+ * counterindex_meta atomicity tests.
  *
- * The checkpoint (opindex_meta.last_block) MUST only advance when all writes
+ * The checkpoint (counterindex_meta.last_block) MUST only advance when all writes
  * for that block have committed. Specifically:
  *
  *   1. Successful blocks advance the checkpoint.

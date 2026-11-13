@@ -40,7 +40,7 @@ for both the source (reading from an OpStream Postgres DB) and the sink:
 import { DbEventSource, openPostgres, createIndexer } from '@counterfinance/counter-index';
 
 const source = new DbEventSource(await openPostgres(process.env.OPSTREAM_DB_URL!));
-const sink   = await openPostgres(process.env.OPINDEX_DB_URL!);
+const sink   = await openPostgres(process.env.COUNTERINDEX_DB_URL!);
 
 const indexer = await createIndexer({ schema, sink, source });
 
@@ -51,7 +51,7 @@ process.on('SIGTERM', async () => {
 });
 ```
 
-Source and sink can be the same Postgres instance, counter-index's `opindex_` table prefix prevents
+Source and sink can be the same Postgres instance, counter-index's `counterindex_` table prefix prevents
 collisions with OpStream's raw tables.
 
 ---
@@ -253,16 +253,16 @@ with `DbEventSource`, where the filter is pushed into the SQL `WHERE` clause.
 
 ## Sink connections
 
-The sink is where counter-index writes your `opindex_*` tables. Open it independently of the source:
+The sink is where counter-index writes your `counterindex_*` tables. Open it independently of the source:
 
 ```ts
 import { openSqlite } from '@counterfinance/counter-index';
 
 // SQLite
-const sink = openSqlite('/data/opindex.db');
+const sink = openSqlite('/data/counterindex.db');
 
 // Postgres
-const sink = await openPostgres(process.env.OPINDEX_DB_URL!);
+const sink = await openPostgres(process.env.COUNTERINDEX_DB_URL!);
 ```
 
 Pass the sink to `createIndexer`:

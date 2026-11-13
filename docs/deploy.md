@@ -57,7 +57,7 @@ indexer.installSignalHandlers();                // SIGTERM/SIGINT -> shutdown() 
   can finish before SIGKILL. Block commits are atomic, so a kill only ever costs
   the current block (re-applied on restart, exactly-once).
 - **Metrics:** scrape `GET /metrics` (Prometheus). Alert on
-  `opindex_health_state{state="stalled"} == 1` and `opindex_chain_blocks_behind`.
+  `counterindex_health_state{state="stalled"} == 1` and `counterindex_chain_blocks_behind`.
 
 ```yaml
 readinessProbe:

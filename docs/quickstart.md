@@ -6,7 +6,7 @@ subscribes to new ones, and serves a GraphQL API your frontend can query.
 ## 1. Define your schema
 
 Everything starts with `defineSchema`. Declare the entities you want to index, counter-index creates
-one SQL table per entity in your sink database, prefixed `opindex_` to avoid collisions.
+one SQL table per entity in your sink database, prefixed `counterindex_` to avoid collisions.
 
 ```ts
 import { defineSchema } from '@counterfinance/counter-index';
@@ -33,14 +33,14 @@ See [Schema](./schema.md) for all field types and options.
 ## 2. Open source and sink connections
 
 **Source**: where counter-index reads raw chain events from.
-**Sink**: where counter-index writes your derived `opindex_*` tables.
+**Sink**: where counter-index writes your derived `counterindex_*` tables.
 
 ```ts
 import { DbEventSource, openSqlite } from '@counterfinance/counter-index';
 
 // Fast path, OpStream-ready database (recommended for production)
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opindex.db');
+const sink   = openSqlite('/data/counterindex.db');
 ```
 
 No OpStream? Use the RPC source instead:
@@ -70,7 +70,7 @@ See [Sources](./sources.md) for Postgres, custom adapters, and the full options 
 
 ## 3. Create the indexer
 
-`createIndexer` is async, it creates the `opindex_*` tables in your sink database on first run
+`createIndexer` is async, it creates the `counterindex_*` tables in your sink database on first run
 and is a no-op on subsequent runs.
 
 ```ts
@@ -247,7 +247,7 @@ const schema = defineSchema({
 });
 
 const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opindex.db');
+const sink   = openSqlite('/data/counterindex.db');
 const indexer = await createIndexer({ schema, sink, source });
 
 indexer.on('Transferred', async (event, ctx) => {

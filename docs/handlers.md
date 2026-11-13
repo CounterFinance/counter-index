@@ -126,7 +126,7 @@ The second argument to every event handler:
 
 ```ts
 interface HandlerContext {
-  store:          EntityStore;   // read/write your opindex_* tables
+  store:          EntityStore;   // read/write your counterindex_* tables
   block:          number;        // same as event.blockNumber
   blockTimestamp: number | undefined;
 }

@@ -97,7 +97,7 @@ dist/
 `,
 
   '.env.example': `OPSTREAM_DB_PATH=/data/opstream.db
-OPINDEX_DB_PATH=/data/opindex.db
+COUNTERINDEX_DB_PATH=/data/counterindex.db
 OPSTREAM_WS_URL=ws://localhost:8080
 FROM_BLOCK=941400
 PORT=4000
@@ -155,7 +155,7 @@ CMD ["node", "dist/main.js"]
       - chain_data:/data
     environment:
       - OPSTREAM_DB_PATH=/data/opstream.db
-      - OPINDEX_DB_PATH=/data/opindex.db
+      - COUNTERINDEX_DB_PATH=/data/counterindex.db
       - FROM_BLOCK=941400
       - PORT=4000
     ports:
@@ -174,7 +174,7 @@ volumes:
 import { registerTransferHandlers } from './handlers/transfers.js';
 
 const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '/data/opstream.db';
-const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? '/data/opindex.db';
+const COUNTERINDEX_DB  = process.env['COUNTERINDEX_DB_PATH']  ?? '/data/counterindex.db';
 const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? '941400');
 const PORT        = Number(process.env['PORT']        ?? '4000');
 
@@ -195,7 +195,7 @@ const schema = defineSchema({
 });
 
 const source  = new DbEventSource(openSqlite(OPSTREAM_DB));
-const sink    = openSqlite(OPINDEX_DB);
+const sink    = openSqlite(COUNTERINDEX_DB);
 const indexer = await createIndexer({ schema, sink, source });
 
 registerTransferHandlers(indexer);

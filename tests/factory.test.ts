@@ -56,7 +56,7 @@ describe('onFactory', () => {
 
     // Pass 1: only the factory is watched → PoolCreated is seen, child discovered.
     await indexer.sync(1, 1);
-    const persisted = await sink.all<{ address: string }>('SELECT address FROM opindex_sources');
+    const persisted = await sink.all<{ address: string }>('SELECT address FROM counterindex_sources');
     expect(persisted.map((r) => r.address)).toContain(POOL.toLowerCase());
 
     // Pass 2: the child is now watched → its Swap is indexed.

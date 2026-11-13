@@ -1,6 +1,6 @@
 # Store
 
-The store is counter-index's async CRUD interface over your `opindex_*` tables. You access it inside
+The store is counter-index's async CRUD interface over your `counterindex_*` tables. You access it inside
 handlers via `ctx.store`, or from outside the handler pipeline via `indexer.store`. It abstracts
 over SQLite and Postgres, the same API works for both.
 

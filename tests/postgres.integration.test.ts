@@ -22,7 +22,7 @@ suite('Postgres integration (real connection)', () => {
     adapter = await openPostgres(PG as string);
     // Clean slate — drop any counter-index tables from a previous run.
     const rows = await adapter.all<{ tablename: string }>(
-      "SELECT tablename FROM pg_tables WHERE tablename LIKE 'opindex_%'",
+      "SELECT tablename FROM pg_tables WHERE tablename LIKE 'counterindex_%'",
     );
     for (const r of rows) await adapter.exec(`DROP TABLE IF EXISTS "${r.tablename}" CASCADE`);
   });

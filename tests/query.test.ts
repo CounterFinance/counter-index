@@ -66,7 +66,7 @@ describe('store.query filters (pushed to SQL)', () => {
 
   it('rejects an unknown field (allow-list — no injection surface)', async () => {
     const s = await seeded();
-    await expect(s.query('Tok', { where: [{ field: 'evil; DROP TABLE opindex_tok', op: 'eq', value: 'x' }] })).rejects.toThrow(/Unknown field/);
+    await expect(s.query('Tok', { where: [{ field: 'evil; DROP TABLE counterindex_tok', op: 'eq', value: 'x' }] })).rejects.toThrow(/Unknown field/);
     await expect(s.query('Tok', { orderBy: 'nope' })).rejects.toThrow(/Unknown field/);
   });
 
@@ -121,7 +121,7 @@ describe('query is pushed to SQL (no whole-table load)', () => {
     seenSql.length = 0;
 
     await store.query('Tok', { where: [{ field: 'holder', op: 'eq', value: '0xAA' }], orderBy: 'block', limit: 10 });
-    const sql = seenSql.find((s) => s.includes('SELECT * FROM opindex_tok'))!;
+    const sql = seenSql.find((s) => s.includes('SELECT * FROM counterindex_tok'))!;
     expect(sql).toMatch(/WHERE/);
     expect(sql).toMatch(/ORDER BY/);
     expect(sql).toMatch(/LIMIT/);

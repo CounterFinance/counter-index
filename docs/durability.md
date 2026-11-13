@@ -7,7 +7,7 @@ transaction (`commitBlock` in `src/indexer.ts`) containing, in order:
 1. every event handler's writes for that block,
 2. the `onBlock` handlers,
 3. the block-hash record (reorg mode),
-4. the checkpoint advance (`opindex_meta.last_block`).
+4. the checkpoint advance (`counterindex_meta.last_block`).
 
 Either the whole block commits or none of it does. The checkpoint can **never**
 advance past partially-applied entity state, because they commit together.

@@ -69,10 +69,10 @@ async function main(): Promise<void> {
   if (healthRes.status !== 200) fail(`/health should be 200 when live, got ${healthRes.status}`);
   if (health.status !== 'live') fail(`/health status should be live, got ${health.status}`);
   for (const must of [
-    'opindex_health_state{state="live"} 1',
-    'opindex_chain_blocks_behind{chain="1"} 0',
-    'opindex_handler_latency_ms_count 1000',          // 100 blocks * 10 events
-    'opindex_reorgs_total 0',
+    'counterindex_health_state{state="live"} 1',
+    'counterindex_chain_blocks_behind{chain="1"} 0',
+    'counterindex_handler_latency_ms_count 1000',          // 100 blocks * 10 events
+    'counterindex_reorgs_total 0',
   ]) if (!metrics.includes(must)) fail(`/metrics missing: ${must}`);
 
   // Consistency: checkpoint must equal the number of committed rows' blocks.

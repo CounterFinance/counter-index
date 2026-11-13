@@ -11,7 +11,7 @@
 # ── Postgres (bundled) ────────────────────────────────────────────────────────
 #     docker compose -f counter-index/docker-compose.yml --profile postgres up -d
 #
-# ── Postgres (external — set OPSTREAM_DB_URL / OPINDEX_DB_URL in .env) ───────
+# ── Postgres (external — set OPSTREAM_DB_URL / COUNTERINDEX_DB_URL in .env) ───────
 #     docker compose -f counter-index/docker-compose.yml up -d
 #
 # Directory layout assumed (run from Opnet-devs/ parent):
@@ -49,13 +49,13 @@ services:
       retries: 3
       start_period: 120s
 
-  # ── counter-index-based indexer — reads opstream.db, writes opindex.db ────────────
+  # ── counter-index-based indexer — reads opstream.db, writes counterindex.db ────────────
   #
   # REPLACE THIS SERVICE with your actual indexer app.
   # Steps:
   #   1. Create your indexer directory with a Dockerfile (see counter-index/Dockerfile).
   #   2. Update `build.dockerfile` to point at your indexer's Dockerfile.
-  #   3. Set your env vars (OPSTREAM_DB_PATH, OPINDEX_DB_PATH, etc.).
+  #   3. Set your env vars (OPSTREAM_DB_PATH, COUNTERINDEX_DB_PATH, etc.).
   #
   counter-index-indexer:
     build:
@@ -69,10 +69,10 @@ services:
     environment:
       # SQLite paths inside the container:
       OPSTREAM_DB_PATH: /app/data/opstream.db   # source — written by OpStream above
-      OPINDEX_DB_PATH:  /app/data/opindex.db    # sink   — written by this indexer
-      # Postgres: set these instead (opindex_* prefix avoids table collisions):
+      COUNTERINDEX_DB_PATH:  /app/data/counterindex.db    # sink   — written by this indexer
+      # Postgres: set these instead (counterindex_* prefix avoids table collisions):
       # OPSTREAM_DB_URL: postgres://opstream:secret@postgres:5432/opstream
-      # OPINDEX_DB_URL:  postgres://opstream:secret@postgres:5432/opstream
+      # COUNTERINDEX_DB_URL:  postgres://opstream:secret@postgres:5432/opstream
 
     volumes:
       - chain_data:/app/data              # Shared with opstream — reads opstream.db
@@ -100,5 +100,5 @@ services:
       retries: 5
 
 volumes:
-  chain_data:       # Shared SQLite volume (opstream.db + opindex.db)
+  chain_data:       # Shared SQLite volume (opstream.db + counterindex.db)
   postgres_data:    # Postgres data (only used with --profile postgres)

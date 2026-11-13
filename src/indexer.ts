@@ -40,7 +40,7 @@ import {
 
 export interface IndexerConfig<S extends SchemaDefinition = SchemaDefinition> {
   schema: Schema<S>;
-  /** Sink DB — counter-index owns its own opindex_* tables here. */
+  /** Sink DB — counter-index owns its own counterindex_* tables here. */
   sink: MinimalDbAdapter;
   /** Source — where raw chain events are read from. Required for sync() and subscribe(). */
   source?: EventSource;
@@ -143,7 +143,7 @@ export interface Indexer<S extends SchemaDefinition = SchemaDefinition> {
     fromBlock: number,
     toBlock: number,
     filters?: EventSourceFilters,
-    /** Known chain tip — written to opindex_meta so _meta.synced reflects real catch-up state. */
+    /** Known chain tip — written to counterindex_meta so _meta.synced reflects real catch-up state. */
     knownTip?: number,
   ): Promise<IndexerStats>;
 
@@ -295,7 +295,7 @@ export async function createIndexer<S extends SchemaDefinition>(
   async function ensureSourcesTable(): Promise<void> {
     if (sourcesTableReady) return;
     await config.sink.exec(
-      `CREATE TABLE IF NOT EXISTS opindex_sources (chain_id ${factoryIntType} NOT NULL, address TEXT NOT NULL, from_block ${factoryIntType}, PRIMARY KEY (chain_id, address))`,
+      `CREATE TABLE IF NOT EXISTS counterindex_sources (chain_id ${factoryIntType} NOT NULL, address TEXT NOT NULL, from_block ${factoryIntType}, PRIMARY KEY (chain_id, address))`,
     );
     sourcesTableReady = true;
   }
@@ -307,9 +307,9 @@ export async function createIndexer<S extends SchemaDefinition>(
     trackedSources.add(key);
     await ensureSourcesTable();
     if (config.sink.dialect === 'sqlite') {
-      await config.sink.run(`INSERT OR IGNORE INTO opindex_sources (chain_id, address, from_block) VALUES (?, ?, ?)`, [chainId, addr, fromBlock]);
+      await config.sink.run(`INSERT OR IGNORE INTO counterindex_sources (chain_id, address, from_block) VALUES (?, ?, ?)`, [chainId, addr, fromBlock]);
     } else {
-      await config.sink.run(`INSERT INTO opindex_sources (chain_id, address, from_block) VALUES ($1, $2, $3) ON CONFLICT (chain_id, address) DO NOTHING`, [chainId, addr, fromBlock]);
+      await config.sink.run(`INSERT INTO counterindex_sources (chain_id, address, from_block) VALUES ($1, $2, $3) ON CONFLICT (chain_id, address) DO NOTHING`, [chainId, addr, fromBlock]);
     }
     if (config.source && isDynamicSource(config.source)) config.source.addAddress(addr);
     log.info('indexer', 'factory child discovered', { chain: chainId, address: addr, from_block: fromBlock });
@@ -318,7 +318,7 @@ export async function createIndexer<S extends SchemaDefinition>(
   async function loadSourcesOnce(): Promise<void> {
     if (!hasFactory || sourcesLoaded) return;
     await ensureSourcesTable();
-    const rows = await config.sink.all<{ chain_id: number; address: string }>(`SELECT chain_id, address FROM opindex_sources`);
+    const rows = await config.sink.all<{ chain_id: number; address: string }>(`SELECT chain_id, address FROM counterindex_sources`);
     for (const r of rows) {
       trackedSources.add(`${r.chain_id}:${r.address}`);
       if (config.source && isDynamicSource(config.source)) config.source.addAddress(r.address);
