@@ -1,6 +1,6 @@
 # Decoders
 
-OPNET emits events as raw big-endian binary data. op-index ships built-in decoders for the most
+OPNET emits events as raw big-endian binary data. counter-index ships built-in decoders for the most
 common OPNET protocol events, and lets you register your own for custom contracts.
 
 When a decoder is registered for an event name, `event.decoded` in your handler will be a
@@ -36,7 +36,7 @@ Address fields (`from`, `to`, `sender`, etc.) are returned as lowercase hex stri
 ## Registering a custom decoder
 
 ```ts
-import { registerDecoder } from '@opnet-collective/op-index';
+import { registerDecoder } from '@counterfinance/counter-index';
 
 registerDecoder('MyCustomEvent', (rawBytes: Uint8Array) => {
   if (rawBytes.length < 64) return null; // guard against malformed data
@@ -50,13 +50,13 @@ registerDecoder('MyCustomEvent', (rawBytes: Uint8Array) => {
   const address = '0x' + Buffer.from(addrBytes).toString('hex');
 
   return {
-    amount: amount.toString(), // return as decimal string — consistent with built-ins
+    amount: amount.toString(), // return as decimal string, consistent with built-ins
     address,
   };
 });
 ```
 
-Return `null` if the bytes are malformed or too short — op-index will set `event.decoded = null`
+Return `null` if the bytes are malformed or too short, counter-index will set `event.decoded = null`
 and continue processing.
 
 `registerDecoder` is global and takes effect immediately. Call it once at startup, before
@@ -65,7 +65,7 @@ and continue processing.
 ## Reading the decoder registry
 
 ```ts
-import { DECODER_REGISTRY } from '@opnet-collective/op-index';
+import { DECODER_REGISTRY } from '@counterfinance/counter-index';
 
 // Map<eventName, decoder function>
 console.log([...DECODER_REGISTRY.keys()]);
@@ -80,7 +80,7 @@ and check `event.decoded`:
 ```ts
 indexer.on('*', async (event) => {
   if (!event.decoded) {
-    // Unknown event — raw bytes available in event.eventRaw
+    // Unknown event, raw bytes available in event.eventRaw
     console.log(`Unknown event: ${event.eventName} (${event.dataLength} bytes)`);
   }
 });
@@ -88,7 +88,7 @@ indexer.on('*', async (event) => {
 
 ## Binary format reference
 
-OPNET events follow a big-endian ABI similar to Ethereum's — each value is padded to 32 bytes.
+OPNET events follow a big-endian ABI similar to Ethereum's, each value is padded to 32 bytes.
 Reading the raw bytes:
 
 ```ts

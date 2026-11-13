@@ -1,6 +1,6 @@
 # GraphQL API
 
-op-index auto-generates a complete GraphQL schema from your `defineSchema()` entities. No SDL file
+counter-index auto-generates a complete GraphQL schema from your `defineSchema()` entities. No SDL file
 to write, no codegen to run, no resolvers to wire up manually. Call `indexer.serve()` and your
 API is live.
 
@@ -37,7 +37,7 @@ interface ServeOptions {
 
 ## GraphiQL playground
 
-Opening `GET /graphql` in a browser loads GraphiQL — a full in-browser IDE with:
+Opening `GET /graphql` in a browser loads GraphiQL, a full in-browser IDE with:
 
 - Schema explorer sidebar (all entities, fields, and filter arguments)
 - Query editor with syntax highlighting and autocomplete
@@ -45,29 +45,29 @@ Opening `GET /graphql` in a browser loads GraphiQL — a full in-browser IDE wit
 - Response viewer
 - Query history
 
-It is served from the unpkg CDN (React 18 + GraphiQL 3) — no extra files, no build step.
+It is served from the unpkg CDN (React 18 + GraphiQL 3), no extra files, no build step.
 
 ---
 
 ## Generated queries
 
-For every entity in your schema, op-index generates two queries.
+For every entity in your schema, counter-index generates two queries.
 
-### Singular — fetch by id
+### Singular, fetch by id
 
 ```graphql
 pool(id: "0xabc...") {
   id
   address
   token0
-  reserve0   # returned as a decimal string — BigInt scalar
+  reserve0   # returned as a decimal string, BigInt scalar
   active
 }
 ```
 
 Returns the entity or `null` if not found.
 
-### Plural — Connection with pagination
+### Plural, Connection with pagination
 
 ```graphql
 pools(
@@ -95,7 +95,7 @@ The plural query name is the entity name lowercased with an `s` suffix: `Pool` �
 
 ## Cursor pagination
 
-Plural queries use cursor-based pagination — more stable than offset pagination because inserted
+Plural queries use cursor-based pagination, more stable than offset pagination because inserted
 or deleted records between pages do not shift earlier pages.
 
 ### How it works
@@ -109,7 +109,7 @@ or deleted records between pages do not shift earlier pages.
 ### Walking pages
 
 ```graphql
-# Page 1 — no cursor
+# Page 1, no cursor
 query Page1 {
   pools(orderBy: id, orderDirection: asc, first: 10) {
     items { id address }
@@ -118,7 +118,7 @@ query Page1 {
   }
 }
 
-# Page 2 — pass endCursor from page 1
+# Page 2, pass endCursor from page 1
 query Page2 {
   pools(orderBy: id, orderDirection: asc, first: 10, after: "<endCursor from page 1>") {
     items { id address }
@@ -129,17 +129,17 @@ query Page2 {
 ```
 
 `pageInfo.hasNextPage: false` means you have seen all matching records.
-`totalCount` is the count of the full filtered set — it does not change as you page through.
+`totalCount` is the count of the full filtered set, it does not change as you page through.
 `endCursor` is `null` when the returned page is empty.
 
 ### Cursor format
 
-Cursors are opaque base64-encoded strings. Do not parse or construct them manually — always read
+Cursors are opaque base64-encoded strings. Do not parse or construct them manually, always read
 `endCursor` from `pageInfo` and pass it verbatim to the next `after` argument.
 
 ---
 
-## Filtering — `where` argument
+## Filtering: `where` argument
 
 Every field in your schema gets a set of filter operators based on its type.
 
@@ -153,7 +153,7 @@ Every field in your schema gets a set of filter operators based on its type.
 | `_starts_with` | `address_starts_with: "0x"` | starts with prefix |
 | `_ends_with` | `address_ends_with: "ff"` | ends with suffix |
 
-### Numeric fields — `int`, `float`, `bigint`
+### Numeric fields: `int`, `float`, `bigint`
 
 | Operator | Example | Matches |
 |---|---|---|
@@ -175,8 +175,8 @@ Every field in your schema gets a set of filter operators based on its type.
 
 ### The `id` field
 
-The `id` field always supports string operators — exact, `_not`, `_contains`, `_starts_with`,
-`_ends_with` — regardless of entity type.
+The `id` field always supports string operators, exact, `_not`, `_contains`, `_starts_with`,
+`_ends_with`: regardless of entity type.
 
 ### Combining filters
 
@@ -197,7 +197,7 @@ pools(orderBy: reserve0, orderDirection: desc) { items { id reserve0 } }
 `orderBy` accepts any field name from the entity, plus `id`. `orderDirection` is `asc` (default)
 or `desc`.
 
-Ordering is **stable** — when two records have the same value for the `orderBy` field, they are
+Ordering is **stable**: when two records have the same value for the `orderBy` field, they are
 further sorted by `id` in ascending order. This guarantees that cursors are always deterministic,
 even across pages.
 
@@ -205,7 +205,7 @@ even across pages.
 
 ## BigInt scalar
 
-OPNET deals in 256-bit integers. op-index exposes them as a custom `BigInt` scalar — serialised as
+OPNET deals in 256-bit integers. counter-index exposes them as a custom `BigInt` scalar, serialised as
 decimal strings over the wire so they survive JSON without precision loss.
 
 ```graphql
@@ -224,7 +224,7 @@ pools(where: { reserve0_gt: "500000000000000000" }) { items { id } }
 ## Subscriptions
 
 WebSocket subscriptions push updates to connected clients in real time, without polling. They are
-opt-in — enabling them adds `graphql-ws` and `ws` as required peer dependencies.
+opt-in, enabling them adds `graphql-ws` and `ws` as required peer dependencies.
 
 ### Setup
 
@@ -238,7 +238,7 @@ const handle = await indexer.serve({ port: 4000, subscriptions: true });
 // WS:    ws://localhost:4000/graphql
 ```
 
-The WebSocket server shares the same port as the HTTP server — no extra port to open or proxy.
+The WebSocket server shares the same port as the HTTP server, no extra port to open or proxy.
 
 ### Available subscriptions
 
@@ -256,7 +256,7 @@ subscription {
 ```
 
 `poolUpdated` fires whenever `store.set('Pool', ...)` or `store.update('Pool', ...)` is called
-— including from your event handlers during live indexing. It does **not** fire on
+- including from your event handlers during live indexing. It does **not** fire on
 `store.delete()`.
 
 ### Connecting from a client
@@ -296,7 +296,7 @@ const wsLink = new GraphQLWsLink(
 
 - Multiple concurrent subscribers all receive the same events independently.
 - Each subscriber's cleanup (unsubscribing, closing the tab) is handled automatically.
-- The subscription resolver filters strictly by entity — `poolUpdated` never fires for `Token`
+- The subscription resolver filters strictly by entity, `poolUpdated` never fires for `Token`
   writes, and vice versa.
 - If the server restarts, clients must reconnect. `graphql-ws` handles automatic reconnection
   with exponential backoff.

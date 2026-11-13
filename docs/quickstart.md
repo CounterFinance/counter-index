@@ -1,15 +1,18 @@
 # Quickstart
 
 This guide walks you from a blank project to a live indexer that backfills historical blocks,
-subscribes to new ones, and serves a GraphQL API your frontend can query.
+subscribes to new ones, and serves a GraphQL API your frontend can query. The examples are
+EVM-first (any JSON-RPC node); the same flow works for the Solana and OPNET adapters, which
+differ only in the source you plug in (see [Sources](./sources.md)).
 
 ## 1. Define your schema
 
-Everything starts with `defineSchema`. Declare the entities you want to index — op-index creates
-one SQL table per entity in your sink database, prefixed `opindex_` to avoid collisions.
+Everything starts with `defineSchema`. Declare the entities you want to index, counter-index
+creates one SQL table per entity in your sink database, prefixed `counterindex_` to avoid
+collisions.
 
 ```ts
-import { defineSchema } from '@opnet-collective/op-index';
+import { defineSchema } from '@counterfinance/counter-index';
 
 const schema = defineSchema({
   Account: {
@@ -19,7 +22,6 @@ const schema = defineSchema({
     lastSeen: { type: 'int' },
   },
   Transfer: {
-    txHash: { type: 'string' },
     from:   { type: 'string' },
     to:     { type: 'string' },
     value:  { type: 'bigint' },
@@ -32,67 +34,55 @@ See [Schema](./schema.md) for all field types and options.
 
 ## 2. Open source and sink connections
 
-**Source** — where op-index reads raw chain events from.
-**Sink** — where op-index writes your derived `opindex_*` tables.
+**Source**: where counter-index reads raw chain events from.
+**Sink**: where counter-index writes your derived `counterindex_*` tables.
+
+The EVM adapter reads logs from any JSON-RPC node via `eth_getLogs`, decoding them against a
+viem ABI:
 
 ```ts
-import { DbEventSource, openSqlite } from '@opnet-collective/op-index';
+import { createIndexer, EvmLogSource, openSqlite } from '@counterfinance/counter-index';
+import { createPublicClient, http, parseAbi } from 'viem';
+import { mainnet } from 'viem/chains';
 
-// Fast path — OpStream-ready database (recommended for production)
-const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opindex.db');
-```
+const abi = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+const client = createPublicClient({ chain: mainnet, transport: http(process.env.RPC_URL) });
 
-No OpStream? Use the RPC source instead:
-
-```ts
-import { RpcEventSource } from '@opnet-collective/op-index';
-import { JSONRpcProvider } from 'opnet';
-
-const source = new RpcEventSource(
-  new JSONRpcProvider('https://mainnet.opnet.org'),
-  { rpsLimit: 5 },
-);
-```
-
-Or let op-index probe and decide automatically:
-
-```ts
-import { createEventSource } from '@opnet-collective/op-index';
-
-const source = await createEventSource({
-  db:  '/data/opstream.db',                              // fast if present
-  rpc: new JSONRpcProvider('https://mainnet.opnet.org'), // fallback
+const source = new EvmLogSource({
+  chainId: mainnet.id, network: 'ethereum', abi, client,
+  addresses: ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'], // USDC
 });
+const sink = openSqlite('/data/counterindex.db');
 ```
 
-See [Sources](./sources.md) for Postgres, custom adapters, and the full options reference.
+Other chains swap only the source: `SolanaLogSource` for Anchor programs, or `RpcEventSource` /
+`DbEventSource` for OPNET (over an RPC node or an OpStream-ready database). See
+[Sources](./sources.md) for Postgres, custom adapters, and the full options reference.
 
 ## 3. Create the indexer
 
-`createIndexer` is async — it creates the `opindex_*` tables in your sink database on first run
-and is a no-op on subsequent runs.
+`createIndexer` is async, it creates the `counterindex_*` tables in your sink database on first
+run and is a no-op on subsequent runs.
 
 ```ts
-import { createIndexer } from '@opnet-collective/op-index';
-
 const indexer = await createIndexer({ schema, sink, source });
 ```
 
 ## 4. Register handlers
 
-Handlers are async functions that fire when a specific event name is seen. op-index calls them in
-the order they were registered, awaiting each one before moving to the next.
+Handlers are async functions that fire when a specific event name is seen. counter-index calls
+them in the order they were registered, awaiting each one before moving to the next. Decoded
+EVM arguments arrive already typed (a `uint256` is a `bigint`, an `address` is a `string`).
 
 ```ts
-indexer.on('Transferred', async (event, ctx) => {
+indexer.on('Transfer', async (event, ctx) => {
   const from  = event.decoded!['from']  as string;
   const to    = event.decoded!['to']    as string;
-  const value = BigInt(event.decoded!['value'] as string);
+  const value = event.decoded!['value'] as bigint;
 
   // Write the transfer record
-  await ctx.store.set('Transfer', event.txHash, {
-    txHash: event.txHash, from, to, value, block: event.blockNumber,
+  await ctx.store.set('Transfer', `${event.txHash}-${event.logIndex}`, {
+    from, to, value, block: event.blockNumber,
   });
 
   // Update sender's account
@@ -111,7 +101,7 @@ Use `'*'` to catch every event regardless of name:
 
 ```ts
 indexer.on('*', async (event, ctx) => {
-  // fires for every event op-index sees
+  // fires for every event counter-index sees
 });
 ```
 
@@ -120,21 +110,22 @@ and handler ordering guarantees.
 
 ## 5. Backfill historical blocks
 
-`sync()` pulls the entire block range from the source in a single query (SQL) or a sequential
-getBlock loop (RPC) and runs every event through your handlers in order.
+`sync()` pulls the block range from the source (an `eth_getLogs` range for EVM, a SQL query for
+an OpStream DB, a sequential getBlock loop for an RPC source) and runs every event through your
+handlers in order.
 
 ```ts
-const stats = await indexer.sync(941400, latestBlock);
+const stats = await indexer.sync(18_000_000, 18_000_100);
 console.log(stats);
-// { eventsProcessed: 18420, eventsDecoded: 16540, blocksProcessed: 58600, lastBlock: 999999 }
+// { eventsProcessed: 18420, eventsDecoded: 16540, blocksProcessed: 101, lastBlock: 18000100 }
 ```
 
 You can filter by contract address or event name to skip irrelevant traffic:
 
 ```ts
 await indexer.sync(fromBlock, toBlock, {
-  contract:   '0xmotoswap_pair',
-  eventNames: ['Synced', 'Swapped'],
+  contract:   '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  eventNames: ['Transfer'],
 });
 ```
 
@@ -144,18 +135,18 @@ await indexer.sync(fromBlock, toBlock, {
 handlers in real time. It returns an unsubscribe function.
 
 ```ts
-const stop = indexer.subscribe(latestBlock + 1);
+const stop = indexer.subscribe(18_000_101);
 
 // Custom poll interval (default: 10 000 ms)
-const stop = indexer.subscribe(latestBlock + 1, { pollIntervalMs: 5000 });
+const stop = indexer.subscribe(18_000_101, { pollIntervalMs: 5000 });
 
 // Stop when you're done
 stop();
 ```
 
-OPNET is a Bitcoin L2 — its block cadence follows Bitcoin's rhythm rather than a fixed per-second
-clock. A 10-second poll interval is more than sufficient for any non-latency-critical use case;
-the default of 10,000 ms is a safe starting point and can be tuned down as the network matures.
+Match the poll interval to your chain's block time: a few seconds for most EVM chains, longer
+for slow-cadence chains (OPNET, for example, follows Bitcoin's block rhythm, so a 10 second
+interval is ample). The default of 10 000 ms is a safe starting point.
 
 ## 7. Serve a GraphQL API
 
@@ -164,15 +155,15 @@ and starts an HTTP server. No SDL file, no codegen, no configuration.
 
 ```ts
 const handle = await indexer.serve({ port: 4000 });
-// GET  http://localhost:4000/graphql → GraphiQL playground (open in browser)
-// POST http://localhost:4000/graphql → execute queries
+// GET  http://localhost:4000/graphql -> GraphiQL playground (open in browser)
+// POST http://localhost:4000/graphql -> execute queries
 ```
 
 Query your data immediately:
 
 ```graphql
 # Fetch a single transfer by id
-{ transfer(id: "0xtxhash") { from to value block } }
+{ transfer(id: "0xtxhash-0") { from to value block } }
 
 # List with filtering, ordering, and cursor pagination
 {
@@ -182,14 +173,18 @@ Query your data immediately:
     orderDirection: desc
     first:          20
   ) {
-    items { id from to value block }
+    nodes { id from to value block }
     pageInfo { hasNextPage endCursor }
     totalCount
   }
 }
 ```
 
-For live updates, enable WebSocket subscriptions (requires peer deps):
+Need cache-friendly reads, a structured query endpoint, or live updates without a WebSocket?
+Opt into the [serving read path](./serving.md): `serve({ readPath: { rest: true, sql: true,
+live: true } })` adds a cacheable REST projection, SQL-over-HTTP, and SSE live queries.
+
+For GraphQL subscriptions over WebSocket, install the peer deps and enable them:
 
 ```bash
 npm install graphql-ws ws
@@ -198,8 +193,7 @@ npm install graphql-ws ws
 ```ts
 const handle = await indexer.serve({ port: 4000, subscriptions: true });
 // WS ws://localhost:4000/graphql
-
-// Then from any GraphQL client:
+//
 // subscription { transferUpdated { id from to value } }
 ```
 
@@ -208,11 +202,11 @@ patterns, and subscription behaviour.
 
 ## 8. Query the store directly
 
-You can also read indexed data without going through GraphQL — useful in the same process:
+You can also read indexed data without going through GraphQL, useful in the same process:
 
 ```ts
 const all      = await indexer.store.list('Transfer');
-const one      = await indexer.store.get('Transfer', txHash);
+const one      = await indexer.store.get('Transfer', `${txHash}-0`);
 const whales   = await indexer.store.find('Account', (a) => (a['balance'] as bigint) > 1_000_000n);
 const count    = await indexer.store.count('Account');
 
@@ -226,9 +220,10 @@ See [Store](./store.md) for the full API.
 
 ```ts
 import {
-  defineSchema, createIndexer,
-  DbEventSource, openSqlite,
-} from '@opnet-collective/op-index';
+  defineSchema, createIndexer, EvmLogSource, openSqlite,
+} from '@counterfinance/counter-index';
+import { createPublicClient, http, parseAbi } from 'viem';
+import { mainnet } from 'viem/chains';
 
 const schema = defineSchema({
   Account: {
@@ -238,25 +233,29 @@ const schema = defineSchema({
     lastSeen: { type: 'int' },
   },
   Transfer: {
-    txHash: { type: 'string' },
-    from:   { type: 'string' },
-    to:     { type: 'string' },
-    value:  { type: 'bigint' },
-    block:  { type: 'int' },
+    from:  { type: 'string' },
+    to:    { type: 'string' },
+    value: { type: 'bigint' },
+    block: { type: 'int' },
   },
 });
 
-const source = new DbEventSource(openSqlite('/data/opstream.db'));
-const sink   = openSqlite('/data/opindex.db');
+const abi = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+const client = createPublicClient({ chain: mainnet, transport: http(process.env.RPC_URL) });
+const source = new EvmLogSource({
+  chainId: mainnet.id, network: 'ethereum', abi, client,
+  addresses: ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'],
+});
+const sink = openSqlite('/data/counterindex.db');
 const indexer = await createIndexer({ schema, sink, source });
 
-indexer.on('Transferred', async (event, ctx) => {
+indexer.on('Transfer', async (event, ctx) => {
   const from  = event.decoded!['from']  as string;
   const to    = event.decoded!['to']    as string;
-  const value = BigInt(event.decoded!['value'] as string);
+  const value = event.decoded!['value'] as bigint;
 
-  await ctx.store.set('Transfer', event.txHash, {
-    txHash: event.txHash, from, to, value, block: event.blockNumber,
+  await ctx.store.set('Transfer', `${event.txHash}-${event.logIndex}`, {
+    from, to, value, block: event.blockNumber,
   });
 
   for (const [addr, delta] of [[from, -value], [to, value]] as [string, bigint][]) {
@@ -273,8 +272,8 @@ indexer.on('Transferred', async (event, ctx) => {
   }
 });
 
-const latestBlock = 999_999;
-await indexer.sync(941_400, latestBlock);
+const latestBlock = 18_000_100;
+await indexer.sync(18_000_000, latestBlock);
 indexer.subscribe(latestBlock + 1);
 
 const handle = await indexer.serve({ port: 4000, subscriptions: true });

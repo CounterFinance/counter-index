@@ -5,7 +5,7 @@
  * Trade-off: one getBlock() call per block → O(N) for backfill, vs sub-millisecond SQL
  * with DbEventSource. Use for lightweight indexers or when OpStream is not available.
  *
- * op-index has zero runtime dependencies. This file defines a minimal BlockProvider interface
+ * counter-index has zero runtime dependencies. This file defines a minimal BlockProvider interface
  * that the opnet SDK's JSONRpcProvider satisfies via TypeScript structural typing — no import
  * from 'opnet' needed. The caller wires the provider at startup.
  *
@@ -17,10 +17,12 @@
  *   );
  */
 
-import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
-import type { DecodedEvent } from './types.js';
-import { decodeEvent } from './decoders/eventDecoders.js';
+import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
+import type { ChainEvent } from '../../types.js';
+import { opnetDecoder } from './opnetDecoder.js';
 import { normaliseFromAddress } from './p2op.js';
+import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
+import type { OpnetChainMeta } from './types.js';
 
 // ---------------------------------------------------------------------------
 // OPNET block/transaction shape — duck-typed, no SDK import
@@ -90,8 +92,8 @@ function extractEvents(
   block: BlockLike,
   blockNumber: number,
   filters?: EventSourceFilters,
-): DecodedEvent[] {
-  const events: DecodedEvent[] = [];
+): ChainEvent[] {
+  const events: ChainEvent[] = [];
   const blockTimestamp = block.timestamp;
 
   for (const [txIndex, tx] of block.transactions.entries()) {
@@ -139,23 +141,29 @@ function extractEvents(
           : new Uint8Array(evt.data);
 
         events.push({
+          chainId:         OPNET_CHAIN_ID,
+          network:         OPNET_NETWORK,
           blockNumber,
+          blockHash:       '',
+          blockTimestamp,
           txHash:          tx.id,
+          txIndex,
+          logIndex:        logIndex++,
           contractAddress: contractAddr,
           eventName:       evt.type,
           eventRaw:        rawData,
-          decoded:         decodeEvent(evt.type, rawData),
+          decoded:         opnetDecoder.decode({ raw: rawData, eventName: evt.type })?.decoded ?? null,
           dataLength:      rawData.length,
-          logIndex:        logIndex++,
-          txIndex,
-          blockTimestamp,
-          fromAddress:       txFromAddress,
-          fromAddressPubkey: txFromPubkey,
-          gasUsed:         tx.gasUsed != null ? BigInt(tx.gasUsed) : undefined,
-          burnedBitcoin:   tx.burnedBitcoin != null ? BigInt(tx.burnedBitcoin) : undefined,
-          failed:          tx.failed,
-          revertReason:    tx.revertReason ?? undefined,
           txEvents,
+          chainMeta: {
+            kind:              'opnet',
+            fromAddress:       txFromAddress,
+            fromAddressPubkey: txFromPubkey,
+            gasUsed:         tx.gasUsed != null ? BigInt(tx.gasUsed) : undefined,
+            burnedBitcoin:   tx.burnedBitcoin != null ? BigInt(tx.burnedBitcoin) : undefined,
+            failed:          tx.failed,
+            revertReason:    tx.revertReason ?? undefined,
+          } as OpnetChainMeta,
         });
       }
     }
@@ -186,7 +194,7 @@ export class RpcEventSource implements EventSource {
     fromBlock: number,
     toBlock: number,
     filters?: EventSourceFilters,
-  ): AsyncIterable<DecodedEvent> {
+  ): AsyncIterable<ChainEvent> {
     let lastCallAt = 0;
 
     for (let n = fromBlock; n <= toBlock; n++) {
@@ -207,7 +215,7 @@ export class RpcEventSource implements EventSource {
 
   subscribe(
     fromBlock: number,
-    onEvent: (e: DecodedEvent) => Promise<void>,
+    onEvent: (e: ChainEvent) => Promise<void>,
     options: { pollIntervalMs?: number } = {},
   ): UnsubscribeFn {
     const intervalMs = options.pollIntervalMs ?? 10_000;

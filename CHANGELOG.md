@@ -1,6 +1,22 @@
 # Changelog
 
-All notable changes to `@opnet-collective/op-index` are documented here.
+All notable changes to `@counterfinance/counter-index` are documented here.
+
+## [0.1.12-alpha.3] — 2026-04-22
+
+### Fixed
+
+- **Subscribe poll loop now recovers from hung OpStream connections.**
+  `rpc()` had no fetch timeout — a connection that was accepted but never responded
+  blocked `_subscribePoll()` forever, silently killing the loop with no log and no crash.
+  Added `AbortSignal.timeout(60_000)` as the default so every RPC call throws after 60s,
+  the catch fires, and the next poll resumes on schedule.
+
+- **Poll errors are now visible in logs.**
+  Both `OpStreamRpcEventSource._subscribePoll()` and `DbEventSource.subscribe()` had bare
+  `catch {}` blocks that swallowed every error silently. Any OpStream outage, network blip,
+  or bad response was invisible — operators only saw "no handler activity recorded" hours
+  later. Now logs: `[counter-index] subscribe poll error (will retry in Xs): <message>`.
 
 ## [0.1.12-alpha.2] — 2026-04-21
 
@@ -50,12 +66,12 @@ All notable changes to `@opnet-collective/op-index` are documented here.
     active backfill. Use this to distinguish **backfilling** from **live** mode at a glance.
   - `hasIndexingErrors` — always `false` for now; reserved for handler-error tracking.
 
-- **`opindex_meta` checkpoint table** — persisted atomically with block writes. On restart
-  the indexer resumes from `opindex_meta.last_block + 1` automatically.
+- **`counterindex_meta` checkpoint table** — persisted atomically with block writes. On restart
+  the indexer resumes from `counterindex_meta.last_block + 1` automatically.
 
 - **`IndexerLogger` interface** — five-level logger (`trace`/`debug`/`info`/`warn`/`error`)
   injectable via `createIndexer({ logger })`. Defaults to a no-op logger so existing
-  consumers are unaffected. `op-index` emits no `console.log` itself; all output is
+  consumers are unaffected. `counter-index` emits no `console.log` itself; all output is
   routed through the injected logger.
 
 - **`sync()` `knownTip` parameter** — `sync(from, to, filters?, knownTip?)` accepts the
@@ -77,7 +93,7 @@ All notable changes to `@opnet-collective/op-index` are documented here.
 
 ### Fixed
 
-- **`opindex_meta` integer overflow on Postgres** — `updated_at` and `last_block_ts` now
+- **`counterindex_meta` integer overflow on Postgres** — `updated_at` and `last_block_ts` now
   use `BIGINT` instead of `INTEGER`. `Date.now()` (~1.78 × 10¹² in 2026) overflows
   Postgres `int4` (~2.1 × 10⁹).
 - **Postgres `NOTICE` spam** — `openPostgres()` now sets `onnotice: () => {}` to suppress
@@ -120,7 +136,7 @@ All notable changes to `@opnet-collective/op-index` are documented here.
 ### Fixed
 
 - **`graphql-ws` peer dependency corrected to `^6.0.0`** — the declared peer dep was
-  `^5.0.0` but op-index imports from `'graphql-ws/use/ws'` which is the v6 path.
+  `^5.0.0` but counter-index imports from `'graphql-ws/use/ws'` which is the v6 path.
   Consumers installing `graphql-ws@6` no longer get a peer dep conflict warning.
 
 ## [0.1.5] — 2026-04-16

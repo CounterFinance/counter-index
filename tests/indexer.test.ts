@@ -7,7 +7,8 @@ import { defineSchema } from '../src/schema.js';
 import { createIndexer } from '../src/indexer.js';
 import { createTestAdapter } from '../src/adapter.js';
 import type { MinimalDbAdapter } from '../src/adapter.js';
-import type { DecodedEvent } from '../src/types.js';
+import type { ChainEvent } from '../src/types.js';
+import { decodeEvent } from '../src/chains/opnet/decoders.js';
 
 // --- Schema ----------------------------------------------------------------
 
@@ -32,8 +33,8 @@ const schema = defineSchema({
 function makeEvent(
   eventName: string,
   decoded: Record<string, unknown>,
-  overrides: Partial<DecodedEvent> = {},
-): DecodedEvent {
+  overrides: Partial<ChainEvent> = {},
+): ChainEvent {
   return {
     blockNumber: 100,
     txHash: '0xdeadbeef',
@@ -156,9 +157,9 @@ describe('createIndexer', () => {
     expect(await indexer.store.count('Account')).toBe(1);
   });
 
-  it('processRawEvent decodes and dispatches', async () => {
+  it('dispatches a decoded ChainEvent through processEvent', async () => {
     const indexer = await createIndexer({ schema, sink: adapter });
-    let received: DecodedEvent | null = null;
+    let received: ChainEvent | null = null;
 
     indexer.on('Transferred', async (event) => { received = event; });
 
@@ -168,10 +169,19 @@ describe('createIndexer', () => {
     raw[63] = 0x02;
     raw[95] = 100;
 
-    await indexer.processRawEvent('Transferred', raw, {
-      blockNumber: 50,
-      txHash: '0xtx',
+    // Decoding is a source/adapter concern now (clean break — core no longer
+    // decodes). A caller decodes via the chain adapter, then dispatches.
+    await indexer.processEvent({
+      chainId:         0,
+      network:         'test',
+      blockNumber:     50,
+      blockHash:       '',
+      txHash:          '0xtx',
       contractAddress: '0xtoken',
+      eventName:       'Transferred',
+      eventRaw:        raw,
+      decoded:         decodeEvent('Transferred', raw),
+      dataLength:      raw.length,
     });
 
     expect(received).not.toBeNull();
@@ -198,7 +208,7 @@ describe('createIndexer', () => {
 
   it('tx-level fields are accessible in handler', async () => {
     const indexer = await createIndexer({ schema, sink: adapter });
-    let seen: Partial<DecodedEvent> = {};
+    let seen: Partial<ChainEvent> = {};
 
     indexer.on('Transferred', async (event) => {
       seen = { fromAddress: event.fromAddress, logIndex: event.logIndex, gasUsed: event.gasUsed };
@@ -418,7 +428,7 @@ describe('onBlock', () => {
 // ---------------------------------------------------------------------------
 
 describe('sync() range-end checkpoint', () => {
-  function makeSource(events: DecodedEvent[]) {
+  function makeSource(events: ChainEvent[]) {
     return {
       async *queryStream() { yield* events; },
       subscribe() { return () => {}; },

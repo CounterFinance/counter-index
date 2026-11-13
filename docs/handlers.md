@@ -1,18 +1,18 @@
 # Handlers
 
-Handlers are the heart of your indexer. They are async functions that op-index calls whenever a
-matching on-chain event passes through the pipeline — whether from a historical backfill or a
+Handlers are the heart of your indexer. They are async functions that counter-index calls whenever a
+matching on-chain event passes through the pipeline, whether from a historical backfill or a
 live subscription. Your handler reads the decoded event, writes to the store, and returns.
-op-index handles the rest.
+counter-index handles the rest.
 
-## Event handlers — `indexer.on`
+## Event handlers: `indexer.on`
 
 ```ts
 indexer.on(eventName: string, handler: EventHandler): void
 ```
 
 Register a handler for a specific event name. Multiple handlers for the same event are supported
-— they all fire, in registration order, each awaited before the next begins.
+- they all fire, in registration order, each awaited before the next begins.
 
 ```ts
 indexer.on('Transferred', async (event, ctx) => {
@@ -41,19 +41,19 @@ Wildcard handlers run after named handlers for the same event.
 
 ```ts
 indexer.on('Synced', async (event, ctx) => {
-  // handler A — update reserves
+  // handler A, update reserves
 });
 
 indexer.on('Synced', async (event, ctx) => {
-  // handler B — emit a candle snapshot
+  // handler B, emit a candle snapshot
   // guaranteed to run after handler A
 });
 ```
 
-## Block handlers — `indexer.onBlock`
+## Block handlers: `indexer.onBlock`
 
 Block handlers fire **once per block**, after all event handlers for that block have completed.
-They are ideal for block-level aggregates — candle closes, reserve snapshots, any state that
+They are ideal for block-level aggregates, candle closes, reserve snapshots, any state that
 should be computed after seeing all of a block's events.
 
 ```ts
@@ -126,7 +126,7 @@ The second argument to every event handler:
 
 ```ts
 interface HandlerContext {
-  store:          EntityStore;   // read/write your opindex_* tables
+  store:          EntityStore;   // read/write your counterindex_* tables
   block:          number;        // same as event.blockNumber
   blockTimestamp: number | undefined;
 }
@@ -144,11 +144,11 @@ interface BlockContext {
 
 ## Processing guarantees
 
-- Handlers are called **in block order** — events from block N always complete before block N+1
+- Handlers are called **in block order**: events from block N always complete before block N+1
   begins, regardless of whether you're backfilling or live.
 - Within a single block, events are processed in **log order** (ascending `logIndex`).
 - If a handler throws, the error propagates to `sync()` / `subscribe()` and processing stops.
-  There is no automatic retry — catching and logging errors inside your handler is your
+  There is no automatic retry, catching and logging errors inside your handler is your
   responsibility.
 
 ## Feeding events directly
@@ -156,7 +156,7 @@ interface BlockContext {
 For WebSocket push sources or testing, bypass the EventSource entirely:
 
 ```ts
-// Raw bytes — op-index decodes them first
+// Raw bytes, counter-index decodes them first
 await indexer.processRawEvent('Transferred', rawBytes, {
   blockNumber:     50,
   txHash:          '0xtx',
@@ -165,9 +165,9 @@ await indexer.processRawEvent('Transferred', rawBytes, {
   fromAddress:     '0xsender',
 });
 
-// Pre-decoded — dispatch directly
+// Pre-decoded, dispatch directly
 await indexer.processEvent(event);
 
-// Batch — preserves block ordering and fires block handlers at boundaries
+// Batch, preserves block ordering and fires block handlers at boundaries
 await indexer.processEvents([event1, event2, event3]);
 ```

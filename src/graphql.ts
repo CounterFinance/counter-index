@@ -1,5 +1,5 @@
 /**
- * GraphQL API layer for op-index.
+ * GraphQL API layer for counter-index.
  *
  * Automatically generates a GraphQL schema + resolvers from the defineSchema()
  * entity definitions and serves them over HTTP (and optionally WebSocket).
@@ -22,7 +22,7 @@
  */
 
 import { createServer } from 'node:http';
-import type { Server } from 'node:http';
+import type { Server, ServerResponse, IncomingMessage } from 'node:http';
 import {
   GraphQLSchema,
   GraphQLObjectType,
@@ -36,11 +36,13 @@ import {
   GraphQLNonNull,
   GraphQLList,
   graphql,
+  parse,
   Kind,
 } from 'graphql';
-import type { GraphQLFieldConfigMap, GraphQLInputFieldConfigMap, GraphQLEnumValueConfigMap } from 'graphql';
+import type { GraphQLFieldConfigMap, GraphQLInputFieldConfigMap, GraphQLEnumValueConfigMap, DocumentNode, SelectionNode } from 'graphql';
 import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
-import type { EntityStore } from './store.js';
+import type { EntityStore, StoreFilter, FilterOp } from './store.js';
+import type { ReadPathOptions, ReadRouter } from './serving.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,6 +60,97 @@ export interface ServeOptions {
    * Default: false.
    */
   subscriptions?: boolean;
+  /**
+   * Provider for GET /health (JSON) and GET /metrics (Prometheus text). Numeric
+   * values become `counterindex_<key>` gauges; a nested object becomes labelled
+   * gauges `counterindex_<key>{key="<sub>"}`. Booleans map to 0/1.
+   */
+  status?: () => Record<string, unknown>;
+  /** Max rows a connection's `first` can return. Default 1000. */
+  maxPageSize?: number;
+  /** Reject queries whose selection-set nesting exceeds this. Default 12. */
+  maxQueryDepth?: number;
+  /** Require `Authorization: Bearer <token>` on POST /graphql when set. */
+  auth?: string;
+  /** Simple per-IP rate limit for POST /graphql. */
+  rateLimit?: { windowMs: number; max: number };
+  /**
+   * Serving-scale read path (opidx-#57): a cacheable REST projection, a
+   * structured SQL-over-HTTP query endpoint, and SSE live queries — all over the
+   * same SQL pushdown as GraphQL. See {@link ReadPathOptions}. Default: off.
+   */
+  readPath?: ReadPathOptions;
+}
+
+/** Max selection-set nesting depth of a GraphQL document (DoS guard). */
+function queryDepth(document: DocumentNode): number {
+  let max = 0;
+  const walk = (selections: readonly SelectionNode[] | undefined, depth: number): void => {
+    if (!selections) return;
+    if (depth > max) max = depth;
+    for (const sel of selections) {
+      if (sel.kind === Kind.FIELD && sel.selectionSet) walk(sel.selectionSet.selections, depth + 1);
+      else if (sel.kind === Kind.INLINE_FRAGMENT && sel.selectionSet) walk(sel.selectionSet.selections, depth);
+    }
+  };
+  for (const def of document.definitions) {
+    if (def.kind === Kind.OPERATION_DEFINITION) walk(def.selectionSet.selections, 1);
+  }
+  return max;
+}
+
+/** Render a flat/one-level-nested status map as Prometheus exposition text. */
+/** Health shape emitted by the indexer (see src/lifecycle.ts). */
+interface HealthLike {
+  state?: string;
+  uptimeMs?: number;
+  reorgs?: number;
+  errors?: number;
+  chains?: Array<{ chainId: number; lastBlock?: number; blocksBehind?: number | null; idleMs?: number }>;
+}
+const HEALTH_STATES = ['starting', 'backfilling', 'live', 'degraded', 'stalled', 'draining', 'stopped'];
+
+function renderMetrics(status: Record<string, unknown>): string {
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(status)) {
+    if (typeof v === 'number') { lines.push(`counterindex_${k} ${v}`); continue; }
+    if (typeof v === 'boolean') { lines.push(`counterindex_${k} ${v ? 1 : 0}`); continue; }
+    if (k === 'health' && v && typeof v === 'object') { renderHealth(v as HealthLike, lines); continue; }
+    if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('counterindex_handler_latency_ms', v as HistogramLike, lines); continue; }
+    if (k === 'handlersByEvent' && v && typeof v === 'object') {
+      for (const [event, s] of Object.entries(v as Record<string, { calls?: number; sumMs?: number }>)) {
+        if (typeof s?.calls === 'number') lines.push(`counterindex_handler_calls{event="${event}"} ${s.calls}`);
+        if (typeof s?.sumMs === 'number') lines.push(`counterindex_handler_ms_sum{event="${event}"} ${s.sumMs}`);
+      }
+      continue;
+    }
+    if (v && typeof v === 'object') {
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof v2 === 'number') lines.push(`counterindex_${k}{key="${k2}"} ${v2}`);
+      }
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+function renderHealth(h: HealthLike, lines: string[]): void {
+  // state as a one-hot gauge so Prometheus can alert on `== "stalled"`.
+  for (const s of HEALTH_STATES) lines.push(`counterindex_health_state{state="${s}"} ${h.state === s ? 1 : 0}`);
+  if (typeof h.uptimeMs === 'number') lines.push(`counterindex_uptime_ms ${h.uptimeMs}`);
+  if (typeof h.reorgs === 'number') lines.push(`counterindex_reorgs_total ${h.reorgs}`);
+  if (typeof h.errors === 'number') lines.push(`counterindex_errors_total ${h.errors}`);
+  for (const c of h.chains ?? []) {
+    if (typeof c.blocksBehind === 'number') lines.push(`counterindex_chain_blocks_behind{chain="${c.chainId}"} ${c.blocksBehind}`);
+    if (typeof c.lastBlock === 'number') lines.push(`counterindex_chain_last_block{chain="${c.chainId}"} ${c.lastBlock}`);
+    if (typeof c.idleMs === 'number') lines.push(`counterindex_chain_idle_ms{chain="${c.chainId}"} ${c.idleMs}`);
+  }
+}
+
+interface HistogramLike { buckets?: Array<{ le: number | '+Inf'; count: number }>; count?: number; sum?: number }
+function renderHistogram(name: string, h: HistogramLike, lines: string[]): void {
+  for (const b of h.buckets ?? []) lines.push(`${name}_bucket{le="${b.le}"} ${b.count}`);
+  if (typeof h.count === 'number') lines.push(`${name}_count ${h.count}`);
+  if (typeof h.sum === 'number') lines.push(`${name}_sum ${h.sum}`);
 }
 
 export interface ServeHandle {
@@ -127,12 +220,32 @@ function opsForType(type: FieldType): readonly string[] {
 // Cursor helpers — opaque base64-encoded entity id
 // ---------------------------------------------------------------------------
 
-function encodeCursor(id: string): string {
-  return Buffer.from(id, 'utf8').toString('base64');
+/** A keyset cursor carries the order-by value + id, so paging is stable in SQL. */
+export function encodeCursor(id: string, sortValue: string): string {
+  return Buffer.from(JSON.stringify({ i: id, s: sortValue }), 'utf8').toString('base64');
 }
 
-function decodeCursor(cursor: string): string {
-  return Buffer.from(cursor, 'base64').toString('utf8');
+export function decodeCursor(cursor: string): { i: string; s: string } {
+  try {
+    const o = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as { i?: unknown; s?: unknown };
+    const str = (v: unknown): string => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
+    return { i: str(o.i), s: str(o.s) };
+  } catch {
+    // Back-compat: a legacy id-only cursor (plain base64 id).
+    const id = Buffer.from(cursor, 'base64').toString('utf8');
+    return { i: id, s: id };
+  }
+}
+
+/** Reconstruct a typed cursor sort value from its stringified form. */
+export function coerceCursorValue(s: string, type: FieldType): unknown {
+  switch (type) {
+    case 'bigint':  return BigInt(s);
+    case 'int':
+    case 'float':   return Number(s);
+    case 'boolean': return s === 'true' || s === '1';
+    default:        return s;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,11 +277,14 @@ function buildFilterType(entityName: string, def: EntityDef): GraphQLInputObject
   for (const op of STRING_OPS) {
     fields[`id${op}`] = { type: GraphQLString };
   }
+  fields['id_in'] = { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) };
   for (const [fieldName, fieldDef] of Object.entries(def)) {
     const base = gqlInputType(fieldDef.type);
     for (const op of opsForType(fieldDef.type)) {
       fields[`${fieldName}${op}`] = { type: base };
     }
+    // Membership filter: `field_in: [T]` → SQL `IN (...)`.
+    fields[`${fieldName}_in`] = { type: new GraphQLList(new GraphQLNonNull(base)) };
   }
   return new GraphQLInputObjectType({ name: `${entityName}_filter`, fields });
 }
@@ -181,17 +297,45 @@ function buildOrderByEnum(entityName: string, def: EntityDef): GraphQLEnumType {
   return new GraphQLEnumType({ name: `${entityName}_orderBy`, values });
 }
 
-function buildEntityType(entityName: string, def: EntityDef): GraphQLObjectType {
-  const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {
-    id: { type: new GraphQLNonNull(GraphQLString) },
-  };
-  for (const [fieldName, fieldDef] of Object.entries(def)) {
-    const base = gqlOutputType(fieldDef.type);
-    fields[fieldName] = {
-      type: fieldDef.optional ? base : new GraphQLNonNull(base),
-    };
-  }
-  return new GraphQLObjectType({ name: entityName, fields });
+function buildEntityType(
+  entityName: string,
+  def: EntityDef,
+  types: Map<string, GraphQLObjectType>,
+  store: EntityStore,
+  schema: Schema<SchemaDefinition>,
+): GraphQLObjectType {
+  // Lazy fields: a `ref` field resolves to another entity type that may not be
+  // built yet, so the thunk is evaluated after every type is registered.
+  return new GraphQLObjectType({
+    name: entityName,
+    fields: () => {
+      const fields: GraphQLFieldConfigMap<Record<string, unknown>, unknown> = {
+        id: { type: new GraphQLNonNull(GraphQLString) },
+      };
+      for (const [fieldName, fieldDef] of Object.entries(def)) {
+        if (fieldDef.ref) {
+          // Nested resolution: expose the referenced entity (nullable — a dangling
+          // id resolves to null), looked up by the stored id (scoped per chain).
+          const refEntity = fieldDef.ref;
+          const refType = types.get(refEntity)!;
+          const refDef = schema.getEntity(refEntity);
+          fields[fieldName] = {
+            type: refType,
+            resolve: async (src: Record<string, unknown>) => {
+              const refId = src[fieldName];
+              if (typeof refId !== 'string' || refId === '') return null;
+              const rec = await store.get(refEntity, refId, src['chainId'] as number | undefined);
+              return rec ? serialiseRecord(rec, refDef) : null;
+            },
+          };
+        } else {
+          const base = gqlOutputType(fieldDef.type);
+          fields[fieldName] = { type: fieldDef.optional ? base : new GraphQLNonNull(base) };
+        }
+      }
+      return fields;
+    },
+  });
 }
 
 function buildConnectionType(entityName: string, entityType: GraphQLObjectType): GraphQLObjectType {
@@ -209,9 +353,10 @@ function buildConnectionType(entityName: string, entityType: GraphQLObjectType):
 // Where filter — apply to a record
 // ---------------------------------------------------------------------------
 
-const KNOWN_OPS = ['not', 'gt', 'lt', 'gte', 'lte', 'contains', 'starts_with', 'ends_with'];
+// Order matters: multi-char suffixes (starts_with) before their prefixes; `in` last.
+const KNOWN_OPS = ['not', 'gte', 'lte', 'gt', 'lt', 'contains', 'starts_with', 'ends_with', 'in'];
 
-function parseFilterKey(key: string): { field: string; op: string } {
+export function parseFilterKey(key: string): { field: string; op: string } {
   for (const op of KNOWN_OPS) {
     if (key.endsWith(`_${op}`)) {
       return { field: key.slice(0, key.length - op.length - 1), op };
@@ -220,66 +365,22 @@ function parseFilterKey(key: string): { field: string; op: string } {
   return { field: key, op: 'eq' };
 }
 
-function compareValues(a: unknown, b: unknown, type: FieldType): number {
-  if (type === 'bigint') {
-    const ba = BigInt(String(a));
-    const bb = BigInt(String(b));
-    return ba < bb ? -1 : ba > bb ? 1 : 0;
-  }
-  if (type === 'int' || type === 'float') return Number(a) - Number(b);
-  return String(a).localeCompare(String(b));
-}
-
-function matchesFilter(
-  record: Record<string, unknown>,
-  where: Record<string, unknown>,
-  def: EntityDef,
-): boolean {
-  for (const [key, filterValue] of Object.entries(where)) {
-    if (filterValue === null || filterValue === undefined) continue;
-    // Filter values are always scalars from GraphQL input — safe to coerce.
-    const fv = filterValue as string | number | boolean | bigint;
+/** Translate the GraphQL `where` object ({field_op: value}) into StoreFilters. */
+function whereToFilters(where: Record<string, unknown>): StoreFilter[] {
+  const out: StoreFilter[] = [];
+  for (const [key, value] of Object.entries(where)) {
+    if (value === null || value === undefined) continue;
     const { field, op } = parseFilterKey(key);
-    const fieldType: FieldType = field === 'id' ? 'string' : (def[field]?.type ?? 'string');
-    const recordValue = record[field];
-    switch (op) {
-      case 'eq':
-        if (String(recordValue) !== String(fv)) return false;
-        break;
-      case 'not':
-        if (String(recordValue) === String(fv)) return false;
-        break;
-      case 'gt':
-        if (compareValues(recordValue, fv, fieldType) <= 0) return false;
-        break;
-      case 'lt':
-        if (compareValues(recordValue, fv, fieldType) >= 0) return false;
-        break;
-      case 'gte':
-        if (compareValues(recordValue, fv, fieldType) < 0) return false;
-        break;
-      case 'lte':
-        if (compareValues(recordValue, fv, fieldType) > 0) return false;
-        break;
-      case 'contains':
-        if (!String(recordValue).includes(String(fv))) return false;
-        break;
-      case 'starts_with':
-        if (!String(recordValue).startsWith(String(fv))) return false;
-        break;
-      case 'ends_with':
-        if (!String(recordValue).endsWith(String(fv))) return false;
-        break;
-    }
+    out.push({ field, op: op as FilterOp, value });
   }
-  return true;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
 // Serialise a store record for GraphQL output
 // ---------------------------------------------------------------------------
 
-function serialiseRecord(
+export function serialiseRecord(
   record: Record<string, unknown>,
   def: EntityDef,
 ): Record<string, unknown> {
@@ -350,14 +451,23 @@ function makePushStream<T>(): PushStream<T> {
 export function buildGraphQLSchema(
   schema: Schema<SchemaDefinition>,
   store: EntityStore,
-  options: { subscriptions?: boolean } = {},
+  options: { subscriptions?: boolean; maxPageSize?: number } = {},
 ): GraphQLSchema {
+  // Hard cap on `first` — a client asking for first: 1e9 is clamped, not honoured.
+  const maxPageSize = Math.max(1, options.maxPageSize ?? 1000);
   const queryFields: GraphQLFieldConfigMap<unknown, unknown> = {};
   const subscriptionFields: GraphQLFieldConfigMap<unknown, unknown> = {};
 
+  // Build every entity type first so `ref` fields can resolve to one another
+  // (the field thunks are evaluated lazily, after the whole map is populated).
+  const entityTypes = new Map<string, GraphQLObjectType>();
+  for (const entityName of schema.entityNames()) {
+    entityTypes.set(entityName, buildEntityType(entityName, schema.getEntity(entityName), entityTypes, store, schema));
+  }
+
   for (const entityName of schema.entityNames()) {
     const def        = schema.getEntity(entityName);
-    const entityType = buildEntityType(entityName, def);
+    const entityType = entityTypes.get(entityName)!;
     const connType   = buildConnectionType(entityName, entityType);
     const filterType = buildFilterType(entityName, def);
     const orderEnum  = buildOrderByEnum(entityName, def);
@@ -399,39 +509,30 @@ export function buildGraphQLSchema(
           after?:          string;
         },
       ) => {
-        let records = await store.list(entityName);
+        // M17: push filter / order / keyset-paginate entirely into SQL — no
+        // whole-table load (closes the DoS of opidx-#42).
+        const dir: 'asc' | 'desc' = orderDirection === 'desc' ? 'desc' : 'asc';
+        const filters = where ? whereToFilters(where) : undefined;
+        const cappedFirst = Math.min(Math.max(1, first), maxPageSize);
+        const orderField = orderBy ?? 'id';
+        const orderType: FieldType = orderField === 'id' ? 'string' : (def[orderField]?.type ?? 'string');
 
-        // Filter
-        if (where && Object.keys(where).length > 0) {
-          records = records.filter((r) => matchesFilter(r, where, def));
-        }
-
-        // Sort — stable: primary on orderBy field, secondary on id (tiebreaker)
-        if (orderBy) {
-          const dir = orderDirection === 'desc' ? -1 : 1;
-          const fieldType: FieldType = orderBy === 'id' ? 'string' : (def[orderBy]?.type ?? 'string');
-          records = [...records].sort((a, b) => {
-            const primary = dir * compareValues(a[orderBy], b[orderBy], fieldType);
-            if (primary !== 0) return primary;
-            return String(a['id']).localeCompare(String(b['id']));
-          });
-        }
-
-        const totalCount = records.length;
-
-        // Cursor — find the position of the `after` item, then slice past it
+        let cursor: { sortValue: unknown; id: string } | undefined;
         if (after) {
-          const cursorId = decodeCursor(after);
-          const idx = records.findIndex((r) => r['id'] === cursorId);
-          if (idx !== -1) records = records.slice(idx + 1);
+          const c = decodeCursor(after);
+          cursor = { id: c.i, sortValue: coerceCursorValue(c.s, orderType) };
         }
 
-        const hasNextPage = records.length > first;
-        const page = records.slice(0, first);
+        // Fetch one extra row to decide hasNextPage without a second query.
+        const rows = await store.query(entityName, {
+          where: filters, orderBy, orderDirection: dir, cursor, limit: cappedFirst + 1,
+        });
+        const totalCount = await store.countWhere(entityName, filters);
 
-        const endCursor = page.length > 0
-          ? encodeCursor(String(page[page.length - 1]['id']))
-          : null;
+        const hasNextPage = rows.length > cappedFirst;
+        const page = rows.slice(0, cappedFirst);
+        const last = page[page.length - 1];
+        const endCursor = last ? encodeCursor(String(last['id']), String(last[orderField])) : null;
 
         return {
           nodes:      page.map((r) => serialiseRecord(r, def)),
@@ -554,7 +655,7 @@ export async function startSubscriptionServer(
     WebSocketServer = wsLib['WebSocketServer'] as typeof WebSocketServer;
   } catch {
     throw new Error(
-      '[op-index] subscriptions: true requires peer dependencies — run: npm install graphql-ws ws',
+      '[counter-index] subscriptions: true requires peer dependencies — run: npm install graphql-ws ws',
     );
   }
 
@@ -571,7 +672,7 @@ const GRAPHIQL_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>op-index — GraphiQL</title>
+  <title>counter-index — GraphiQL</title>
   <link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css" />
   <style>body { margin: 0; } #graphiql { height: 100vh; }</style>
 </head>
@@ -596,21 +697,64 @@ const GRAPHIQL_HTML = `<!DOCTYPE html>
 export function startGraphQLServer(
   gqlSchema: GraphQLSchema,
   options: ServeOptions = {},
+  readRouter?: ReadRouter,
 ): { server: Server; url: string } {
   const port = options.port ?? 4000;
   const path = options.path ?? '/graphql';
+  const maxDepth = options.maxQueryDepth ?? 12;
+  const authToken = options.auth;
+  const rl = options.rateLimit;
+  const MAX_BODY = 1_000_000;                        // 1 MB request-body cap
+  const hits = new Map<string, number[]>();         // per-IP timestamps (rate limit)
+
+  const json = (res: ServerResponse, code: number, body: unknown): void => {
+    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
 
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost`);
 
     // CORS headers — allow any origin for local dev
     res.setHeader('Access-Control-Allow-Origin',  '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Serving-scale read path (REST / SQL-over-HTTP / SSE). Runs before the
+    // GraphQL route + 404; a true return means it owns this request.
+    if (readRouter) {
+      void readRouter(req, res, url).then((handled) => {
+        if (handled) return;
+        routeGraphql(req, res, url);
+      });
+      return;
+    }
+    routeGraphql(req, res, url);
+  });
+
+  function routeGraphql(req: IncomingMessage, res: ServerResponse, url: URL): void {
+
+    // Health + metrics (operational endpoints).
+    if (req.method === 'GET' && url.pathname === '/health') {
+      const s = options.status?.() ?? {};
+      const state = (s['health'] as { state?: string } | undefined)?.state;
+      // Report NOT-ready (503) when the indexer can't make progress, so a load
+      // balancer / k8s readiness probe drains it. `degraded` stays 200 (it is
+      // still progressing). No health info at all ⇒ assume ok (back-compat).
+      const unhealthy = state === 'stalled' || state === 'stopped' || state === 'draining';
+      res.writeHead(unhealthy ? 503 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: state ?? 'ok', ...s }));
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/metrics') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
+      res.end(renderMetrics(options.status?.() ?? {}));
       return;
     }
 
@@ -629,9 +773,44 @@ export function startGraphQLServer(
 
     // GraphQL query — POST /graphql
     if (req.method === 'POST') {
+      // Rate limit (per-IP sliding window).
+      if (rl) {
+        const ip = req.socket.remoteAddress ?? 'unknown';
+        const now = Date.now();
+        const arr = (hits.get(ip) ?? []).filter((t) => now - t < rl.windowMs);
+        if (arr.length >= rl.max) { json(res, 429, { errors: [{ message: 'rate limit exceeded' }] }); return; }
+        arr.push(now); hits.set(ip, arr);
+      }
+      // Auth (optional bearer token).
+      if (authToken && req.headers['authorization'] !== `Bearer ${authToken}`) {
+        json(res, 401, { errors: [{ message: 'unauthorized' }] }); return;
+      }
+
       let body = '';
-      req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      let tooLarge = false;
+      let responded = false;
+      const reply = (code: number, payload: unknown): void => {
+        if (responded) return;
+        responded = true;
+        json(res, code, payload);
+      };
+      // A client that aborts or resets mid-upload emits 'error' on the request/
+      // socket; without a listener Node escalates it to an uncaughtException that
+      // would take the whole server down — exactly the DoS this endpoint guards
+      // against. Swallow it: the request is already over.
+      req.on('error', () => { /* client aborted — ignore */ });
+      res.on('error', () => { /* broken pipe — ignore */ });
+      req.on('data', (chunk: Buffer) => {
+        if (tooLarge) return;                                             // already over the cap — drain & discard
+        body += chunk.toString();
+        if (body.length > MAX_BODY) {
+          tooLarge = true; body = '';
+          reply(413, { errors: [{ message: 'request body too large' }] }); // respond at once
+          req.resume();                                                    // drain the rest cleanly (no reset)
+        }
+      });
       req.on('end', () => {
+        if (tooLarge || responded) return;
         void (async () => {
           try {
             const { query, variables, operationName } = JSON.parse(body) as {
@@ -639,17 +818,25 @@ export function startGraphQLServer(
               variables?: Record<string, unknown>;
               operationName?: string;
             };
+            // Depth limit (nesting DoS guard) — before execution.
+            try {
+              const depth = queryDepth(parse(query));
+              if (depth > maxDepth) {
+                reply(400, { errors: [{ message: `query depth ${depth} exceeds max ${maxDepth}` }] });
+                return;
+              }
+            } catch { /* parse error — let graphql() produce the proper error below */ }
+            if (responded) return;
+
             const result = await graphql({
               schema:         gqlSchema,
               source:         query,
               variableValues: variables,
               operationName,
             });
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(result));
+            reply(200, result);
           } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ errors: [{ message: String(e) }] }));
+            reply(400, { errors: [{ message: String(e) }] });
           }
         })();
       });
@@ -658,7 +845,7 @@ export function startGraphQLServer(
 
     res.writeHead(405);
     res.end('Method not allowed');
-  });
+  }
 
   server.listen(port);
   return { server, url: `http://localhost:${port}${path}` };

@@ -1,7 +1,7 @@
 /**
- * opindex_meta atomicity tests.
+ * counterindex_meta atomicity tests.
  *
- * The checkpoint (opindex_meta.last_block) MUST only advance when all writes
+ * The checkpoint (counterindex_meta.last_block) MUST only advance when all writes
  * for that block have committed. Specifically:
  *
  *   1. Successful blocks advance the checkpoint.
@@ -19,13 +19,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { defineSchema } from '../src/schema.js';
 import { createIndexer } from '../src/indexer.js';
 import { createTestAdapter } from '../src/adapter.js';
-import type { DecodedEvent } from '../src/types.js';
+import type { ChainEvent } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeEvent(blockNumber: number, txSuffix = ''): DecodedEvent {
+function makeEvent(blockNumber: number, txSuffix = ''): ChainEvent {
   return {
     blockNumber,
     txHash:          `0xtx${blockNumber}${txSuffix}`,

@@ -1,7 +1,7 @@
 /**
  * Entity store — DB-backed indexed data store.
  *
- * Each entity defined in the schema gets its own `opindex_<entity>` table
+ * Each entity defined in the schema gets its own `counterindex_<entity>` table
  * (lowercase). Tables are created automatically when the store is initialised.
  * All operations are async — the underlying adapter may be synchronous SQLite
  * or async Postgres; callers don't need to know which.
@@ -9,11 +9,11 @@
  * BigInt fields are serialised as decimal strings (TEXT) since SQL has no
  * native bigint type. They are deserialised back to BigInt on read.
  *
- * Table prefix `opindex_` prevents collisions with OpStream's raw tables when
+ * Table prefix `counterindex_` prevents collisions with OpStream's raw tables when
  * both use the same database.
  */
 
-import type { Schema, SchemaDefinition, EntityDef, FieldType } from './schema.js';
+import type { Schema, SchemaDefinition, EntityDef, FieldDef, FieldType } from './schema.js';
 import type { MinimalDbAdapter } from './adapter.js';
 import { noopLogger, type IndexerLogger } from './logger.js';
 
@@ -30,30 +30,93 @@ export interface StoreChangeEvent {
   operation: 'set' | 'update' | 'delete';
 }
 
-export interface EntityStore {
-  /** Get a single entity by id. Returns undefined if not found. */
-  get(entity: string, id: string): Promise<Record<string, unknown> | undefined>;
+/**
+ * Thrown when a reorg would need to roll back below the retained finality window
+ * — the journal for those blocks was already pruned, so a correct rollback is
+ * impossible. The indexer surfaces this instead of silently diverging; the
+ * operator must widen `finalityDepth` or re-sync the affected range.
+ */
+export class DeepReorgError extends Error {
+  constructor(
+    readonly requestedBlock: number,
+    readonly retainedFloor: number,
+    readonly chainId: number,
+  ) {
+    super(
+      `Deep reorg on chain ${chainId}: rollback to block ${requestedBlock} needs journal below the retained floor ` +
+      `(oldest retained block ${retainedFloor}). The fork is deeper than finalityDepth — increase finalityDepth or re-sync.`,
+    );
+    this.name = 'DeepReorgError';
+  }
+}
 
-  /** Insert or overwrite an entity by id. */
+/** Comparison operators a {@link StoreFilter} can use (pushed into SQL). */
+export type FilterOp = 'eq' | 'not' | 'gt' | 'lt' | 'gte' | 'lte' | 'contains' | 'starts_with' | 'ends_with' | 'in';
+
+/** One parameterised predicate: `field op value`. `field` is validated against the schema. */
+export interface StoreFilter {
+  field: string;
+  op: FilterOp;
+  value: unknown;
+}
+
+/**
+ * A server-side query pushed entirely into SQL — no whole-table load. Filters,
+ * ordering and a keyset cursor become a parameterised
+ * `WHERE … ORDER BY … LIMIT` statement. Field names are validated against the
+ * schema (never interpolated), so there is no injection surface.
+ */
+export interface QueryOptions {
+  where?: StoreFilter[];
+  /** Schema field to order by (or `id`). Defaults to `id`. */
+  orderBy?: string;
+  orderDirection?: 'asc' | 'desc';
+  /** Max rows to return (fetch `pageSize + 1` to detect a next page). */
+  limit?: number;
+  /** Keyset cursor — return rows strictly after `(sortValue, id)` in the order. */
+  cursor?: { sortValue: unknown; id: string };
+  /** Multichain: scope to one chain (added as a `chainId` predicate). */
+  chainId?: number;
+}
+
+export interface EntityStore {
+  // `chainId` scopes the operation to one chain in a multichain schema (composite
+  // (chainId, id) key); omit it for single-chain schemas.
+
+  /** Get a single entity by id. Returns undefined if not found. */
+  get(entity: string, id: string, chainId?: number): Promise<Record<string, unknown> | undefined>;
+
+  /** Insert or overwrite an entity by id (multichain: `data.chainId` identifies the chain). */
   set(entity: string, id: string, data: Record<string, unknown>): Promise<void>;
 
   /** Merge partial fields into an existing entity. Throws if not found. */
-  update(entity: string, id: string, partial: Record<string, unknown>): Promise<void>;
+  update(entity: string, id: string, partial: Record<string, unknown>, chainId?: number): Promise<void>;
 
   /** Delete an entity by id. No-op if not found. */
-  delete(entity: string, id: string): Promise<void>;
+  delete(entity: string, id: string, chainId?: number): Promise<void>;
 
-  /** List all entities of a given type. */
-  list(entity: string): Promise<Record<string, unknown>[]>;
+  /** List all entities of a given type (optionally one chain). */
+  list(entity: string, chainId?: number): Promise<Record<string, unknown>[]>;
 
-  /** Count entities of a given type. */
-  count(entity: string): Promise<number>;
+  /** Count entities of a given type (optionally one chain). */
+  count(entity: string, chainId?: number): Promise<number>;
 
-  /** Find entities matching a predicate (JS-side filtering after SELECT *). */
+  /** Find entities matching a predicate (SELECT filtered by chain, then JS predicate). */
   find(
     entity: string,
     predicate: (record: Record<string, unknown>) => boolean,
+    chainId?: number,
   ): Promise<Record<string, unknown>[]>;
+
+  /**
+   * Server-side query: filter, order and keyset-paginate entirely in SQL (no
+   * whole-table load). Powers the GraphQL connection resolver. Field names are
+   * validated against the schema; values are bound as parameters.
+   */
+  query(entity: string, opts: QueryOptions): Promise<Record<string, unknown>[]>;
+
+  /** Count entities matching `where` (same predicates as {@link query}), in SQL. */
+  countWhere(entity: string, where?: StoreFilter[], chainId?: number): Promise<number>;
 
   /**
    * Subscribe to all store mutations (set / update / delete).
@@ -62,27 +125,139 @@ export interface EntityStore {
    */
   onChange(handler: (event: StoreChangeEvent) => void): () => void;
 
+  // --- Per-block write batching (M13; internal — driven by the indexer) ---
+  /**
+   * Start buffering writes for one block. While a batch is open, set/update/
+   * delete accumulate in memory and get() reads the buffer first (read-your-
+   * writes); nothing hits the database until flushBatch(). One block = one chain.
+   */
+  beginBatch(): void;
+  /**
+   * Flush all buffered writes as batched multi-row upserts / deletes. Called as
+   * the first write inside the block transaction, before the checkpoint. Always
+   * closes the batch (even on error), so a thrown block can't leak batch state.
+   */
+  flushBatch(): Promise<void>;
+
   /**
    * Write or advance the indexed checkpoint for this block.
    * MUST be called as the LAST operation inside the same adapter.transaction()
    * that wraps all entity writes for the block. This guarantees that
-   * opindex_meta.last_block only advances when every entity write for the block
+   * counterindex_meta.last_block only advances when every entity write for the block
    * has committed — making the meta value safe to resume from.
    */
-  writeBlockCheckpoint(blockNumber: number, tipBlock?: number, blockTimestamp?: number): Promise<void>;
+  writeBlockCheckpoint(blockNumber: number, tipBlock?: number, blockTimestamp?: number, chainId?: number): Promise<void>;
 
   /**
-   * Read the current indexed checkpoint from opindex_meta.
+   * Read the current indexed checkpoint from counterindex_meta.
    * Returns undefined if no block has been checkpointed yet.
    */
-  readCheckpoint(): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
+  readCheckpoint(chainId?: number): Promise<{ lastBlock: number; tipBlock?: number; lastBlockTs?: number } | undefined>;
+
+  // --- Reorg support (opt-in; see docs/reorg-design.md) ---
+  /** Turn on the prior-row journal, keeping the last `finalityDepth` blocks. */
+  enableReorg(finalityDepth: number): void;
+  /** Set the block/chain that subsequent writes are journalled under. */
+  setReorgContext(blockNumber: number, chainId: number): void;
+  /** Roll entity state for `chainId` back to the end of `blockNumber` (inclusive). */
+  rollbackToBlock(blockNumber: number, chainId: number): Promise<void>;
+  /** Record the canonical block hash for fork detection. */
+  recordBlockHash(chainId: number, blockNumber: number, blockHash: string): Promise<void>;
+  /** The stored hash for a block, or undefined. */
+  getBlockHash(chainId: number, blockNumber: number): Promise<string | undefined>;
+  /** Drop journal + block-hash rows at or below `belowBlock` (finality pruning). */
+  pruneReorgData(chainId: number, belowBlock: number): Promise<void>;
+}
+
+/** Checkpoint meta-row id: a global singleton, or one row per chain in multichain mode. */
+function checkpointId(chainId?: number): string {
+  return chainId === undefined ? 'singleton' : `chain:${chainId}`;
+}
+
+/**
+ * Wrap a store so every call is scoped to one chain: writes stamp `chainId`,
+ * reads filter by it in SQL (composite (chainId, id) primary key), and
+ * checkpoints key per chain. Used by the indexer for multichain schemas. The
+ * underlying physical store is shared across chains.
+ */
+export function scopeStoreToChain(base: EntityStore, chainId: number): EntityStore {
+  // No id munging: the physical table has a composite (chainId, id) primary key,
+  // so we just thread `chainId` through to the base store, which filters in SQL.
+  return {
+    get(entity, id) { return base.get(entity, id, chainId); },
+    set(entity, id, data) { return base.set(entity, id, { ...data, chainId }); },
+    update(entity, id, partial) { return base.update(entity, id, partial, chainId); },
+    delete(entity, id) { return base.delete(entity, id, chainId); },
+    list(entity) { return base.list(entity, chainId); },
+    count(entity) { return base.count(entity, chainId); },
+    find(entity, predicate) { return base.find(entity, predicate, chainId); },
+    query(entity, opts) { return base.query(entity, { ...opts, chainId }); },
+    countWhere(entity, where) { return base.countWhere(entity, where, chainId); },
+    onChange(handler) { return base.onChange(handler); },
+    beginBatch() { base.beginBatch(); },
+    flushBatch() { return base.flushBatch(); },
+    writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp) {
+      return base.writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId);
+    },
+    readCheckpoint() { return base.readCheckpoint(chainId); },
+    enableReorg(finalityDepth) { base.enableReorg(finalityDepth); },
+    setReorgContext(blockNumber, cid) { base.setReorgContext(blockNumber, cid); },
+    rollbackToBlock(blockNumber, cid) { return base.rollbackToBlock(blockNumber, cid); },
+    recordBlockHash(cid, blockNumber, blockHash) { return base.recordBlockHash(cid, blockNumber, blockHash); },
+    getBlockHash(cid, blockNumber) { return base.getBlockHash(cid, blockNumber); },
+    pruneReorgData(cid, belowBlock) { return base.pruneReorgData(cid, belowBlock); },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Typed store — entity row types inferred from the schema (no codegen)
+// ---------------------------------------------------------------------------
+
+/** Map a schema FieldDef to its TypeScript value type. */
+type FieldTsType<F extends FieldDef> =
+  F['type'] extends 'string'  ? string :
+  F['type'] extends 'int'     ? number :
+  F['type'] extends 'float'   ? number :
+  F['type'] extends 'bigint'  ? bigint :
+  F['type'] extends 'boolean' ? boolean :
+  F['type'] extends 'bytes'   ? Uint8Array :
+  never;
+
+type RequiredFieldKeys<E extends EntityDef> =
+  { [K in keyof E]: E[K]['optional'] extends true ? never : K }[keyof E];
+type OptionalFieldKeys<E extends EntityDef> =
+  { [K in keyof E]: E[K]['optional'] extends true ? K : never }[keyof E];
+
+/** The write shape for an entity: its declared fields, required vs optional honoured. */
+export type RowOf<E extends EntityDef> =
+  { [K in RequiredFieldKeys<E>]: FieldTsType<E[K]> } &
+  { [K in OptionalFieldKeys<E>]?: FieldTsType<E[K]> };
+
+/** The read shape: the row plus the `id` the store stamps on every record. */
+export type StoredRow<E extends EntityDef> = RowOf<E> & { id: string };
+
+/**
+ * A schema-typed view over EntityStore. `createIndexer(<S>)` exposes this on
+ * `indexer.store` and on each handler's `ctx.store`, so entity names are checked
+ * and row shapes are inferred — no codegen, no manual casts. The untyped
+ * `EntityStore` remains the runtime contract underneath.
+ */
+export interface TypedStore<S extends SchemaDefinition = SchemaDefinition> {
+  get<N extends keyof S & string>(entity: N, id: string): Promise<StoredRow<S[N]> | undefined>;
+  set<N extends keyof S & string>(entity: N, id: string, data: RowOf<S[N]>): Promise<void>;
+  update<N extends keyof S & string>(entity: N, id: string, partial: Partial<RowOf<S[N]>>): Promise<void>;
+  delete<N extends keyof S & string>(entity: N, id: string): Promise<void>;
+  list<N extends keyof S & string>(entity: N): Promise<StoredRow<S[N]>[]>;
+  count<N extends keyof S & string>(entity: N): Promise<number>;
+  find<N extends keyof S & string>(entity: N, predicate: (record: StoredRow<S[N]>) => boolean): Promise<StoredRow<S[N]>[]>;
+  onChange(handler: (event: StoreChangeEvent) => void): () => void;
 }
 
 // ---------------------------------------------------------------------------
 // SQL type mapping
 // ---------------------------------------------------------------------------
 
-const TABLE_PREFIX = 'opindex_';
+const TABLE_PREFIX = 'counterindex_';
 
 function fieldTypeSql(type: FieldType, dialect: 'sqlite' | 'postgres'): string {
   switch (type) {
@@ -189,14 +364,47 @@ function notNullDefault(type: FieldType, dialect: 'sqlite' | 'postgres'): string
   }
 }
 
-function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres'): string {
+/**
+ * Incremental migration (M19): add columns for schema fields that aren't in the
+ * existing table yet, so adding a field doesn't force a reset-from-genesis.
+ * Existing rows get the field's NOT NULL default (or NULL for optional fields).
+ * (Type changes + drops are intentionally NOT auto-applied — they're lossy.)
+ */
+async function migrateColumns(
+  adapter: MinimalDbAdapter,
+  table: string,
+  def: EntityDef,
+  dialect: 'sqlite' | 'postgres',
+): Promise<void> {
+  const existing = new Set<string>();
+  if (dialect === 'sqlite') {
+    const rows = await adapter.all<{ name: string }>(`PRAGMA table_info("${table}")`);
+    for (const r of rows) existing.add(r.name);
+  } else {
+    const rows = await adapter.all<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = $1`, [table],
+    );
+    for (const r of rows) existing.add(r.column_name);
+  }
+  for (const [field, fieldDef] of Object.entries(def)) {
+    if (existing.has(field)) continue;
+    const sqlType = fieldTypeSql(fieldDef.type, dialect);
+    const constraint = fieldDef.optional ? '' : ` ${notNullDefault(fieldDef.type, dialect)}`;
+    await adapter.exec(`ALTER TABLE ${table} ADD COLUMN ${col(field)} ${sqlType}${constraint}`);
+  }
+}
+
+function buildCreateTable(entity: string, def: EntityDef, dialect: 'sqlite' | 'postgres', multichain: boolean): string {
   const table = tableName(entity);
-  const cols = ['"id" TEXT NOT NULL PRIMARY KEY'];
+  // Multichain: the primary key is composite (chainId, id); `chainId` is an
+  // injected field (added by defineSchema) so it lands as a column in the loop.
+  const cols = [multichain ? '"id" TEXT NOT NULL' : '"id" TEXT NOT NULL PRIMARY KEY'];
   for (const [field, fieldDef] of Object.entries(def)) {
     const sqlType = fieldTypeSql(fieldDef.type, dialect);
     const constraint = fieldDef.optional ? '' : ` ${notNullDefault(fieldDef.type, dialect)}`;
     cols.push(`${col(field)} ${sqlType}${constraint}`);
   }
+  if (multichain) cols.push(`PRIMARY KEY (${col('chainId')}, "id")`);
   return `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
 }
 
@@ -211,16 +419,18 @@ function buildUpsert(
   table: string,
   fields: string[],
   dialect: 'sqlite' | 'postgres',
+  multichain: boolean,
 ): string {
   const colList = ['"id"', ...fields.map(col)].join(', ');
   const ph = paramList(dialect, fields.length + 1).join(', ');
 
-  if (dialect === 'sqlite') {
-    return `INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`;
-  }
-
-  const updates = fields.map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
-  return `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ("id") DO UPDATE SET ${updates}`;
+  // Upsert on the PRIMARY KEY only (id, or composite (chainId,id)). A conflict on
+  // any OTHER unique index therefore RAISES instead of silently replacing — so a
+  // `unique` field is a real constraint on both dialects (SQLite's INSERT OR
+  // REPLACE would instead delete the conflicting row).
+  const conflict = multichain ? `(${col('chainId')}, "id")` : `("id")`;
+  const updates = fields.filter((f) => f !== 'chainId').map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
+  return `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ${conflict} DO UPDATE SET ${updates}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,12 +443,34 @@ export async function createStore(
   logger: IndexerLogger = noopLogger,
 ): Promise<EntityStore> {
   const dialect = adapter.dialect;
+  const multichain = schema.multichain;
 
-  // Create all entity tables
+  // Create all entity tables + their secondary indexes
   for (const name of schema.entityNames()) {
     const def = schema.getEntity(name);
-    const ddl = buildCreateTable(name, def, dialect);
-    await adapter.exec(ddl);
+    await adapter.exec(buildCreateTable(name, def, dialect, multichain));
+    const table = tableName(name);
+    await migrateColumns(adapter, table, def, dialect);   // M19: add new fields in place
+    for (const [field, fieldDef] of Object.entries(def)) {
+      // UNIQUE index for unique fields; a plain index for index:true + the hot
+      // multichain chainId filter. (In multichain, uniqueness is scoped per chain.)
+      if (fieldDef.unique) {
+        const cols = multichain ? `${col('chainId')}, ${col(field)}` : col(field);
+        await adapter.exec(
+          `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_${field.toLowerCase()}_uniq ON ${table} (${cols})`,
+        );
+      } else if (fieldDef.index || (multichain && field === 'chainId')) {
+        await adapter.exec(
+          `CREATE INDEX IF NOT EXISTS ${table}_${field.toLowerCase()}_idx ON ${table} (${col(field)})`,
+        );
+      }
+    }
+  }
+
+  /** Append `AND "chainId" = ?` (+ its param) when a chain is specified. */
+  function chainClause(chainId: number | undefined, nextParamIdx: number): { sql: string; params: unknown[] } {
+    if (chainId === undefined) return { sql: '', params: [] };
+    return { sql: ` AND ${col('chainId')} = ${param(dialect, nextParamIdx)}`, params: [chainId] };
   }
 
   // Indexed-block checkpoint — one singleton row, updated atomically with
@@ -247,7 +479,7 @@ export async function createStore(
   // and updated_at is Date.now() (ms since epoch, ~1.78T in 2026).
   const intType = dialect === 'postgres' ? 'BIGINT' : 'INTEGER';
   await adapter.exec(`
-    CREATE TABLE IF NOT EXISTS opindex_meta (
+    CREATE TABLE IF NOT EXISTS counterindex_meta (
       id             TEXT     NOT NULL PRIMARY KEY,
       last_block     ${intType} NOT NULL,
       tip_block      ${intType},
@@ -257,13 +489,101 @@ export async function createStore(
   `);
   // Migration for existing tables that predate the last_block_ts column.
   try {
-    await adapter.exec(`ALTER TABLE opindex_meta ADD COLUMN last_block_ts ${intType}`);
+    await adapter.exec(`ALTER TABLE counterindex_meta ADD COLUMN last_block_ts ${intType}`);
   } catch {
     // Column already exists — safe to ignore.
   }
 
+  // Reorg journal (prior-row snapshots) + canonical block-hash log.
+  const serial = dialect === 'postgres' ? 'BIGSERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+  await adapter.exec(`
+    CREATE TABLE IF NOT EXISTS counterindex_journal (
+      seq          ${serial},
+      chain_id     ${intType} NOT NULL,
+      block_number ${intType} NOT NULL,
+      entity       TEXT NOT NULL,
+      entity_id    TEXT NOT NULL,
+      prior_json   TEXT
+    )
+  `);
+  await adapter.exec(`
+    CREATE TABLE IF NOT EXISTS counterindex_blockhash (
+      chain_id     ${intType} NOT NULL,
+      block_number ${intType} NOT NULL,
+      block_hash   TEXT NOT NULL,
+      PRIMARY KEY (chain_id, block_number)
+    )
+  `);
+
+  // Reorg journalling state (off until enableReorg()).
+  let reorgDepth = 0;
+  let curBlock = 0;
+  let curChainId = 0;
+
+  /** JSON replacer/reviver so BLOB (Buffer/Uint8Array) prior values round-trip. */
+  const bufReplace = (_k: string, v: unknown): unknown =>
+    v instanceof Uint8Array ? { __buf: Buffer.from(v).toString('hex') } : v;
+  const bufRevive = (_k: string, v: unknown): unknown =>
+    v && typeof v === 'object' && '__buf' in (v as Record<string, unknown>)
+      ? new Uint8Array(Buffer.from((v as { __buf: string }).__buf, 'hex')) : v;
+
+  async function journalPrior(entity: string, physicalId: string): Promise<void> {
+    if (reorgDepth <= 0) return;
+    // Multichain rows share ids across chains, so scope the prior-row read by chain.
+    const chainFilter = multichain ? ` AND ${col('chainId')} = ${param(dialect, 2)}` : '';
+    const prior = await adapter.get<Record<string, unknown>>(
+      `SELECT * FROM ${tableName(entity)} WHERE "id" = ${param(dialect, 1)}${chainFilter}`,
+      multichain ? [physicalId, curChainId] : [physicalId],
+    );
+    const priorJson = prior ? JSON.stringify(prior, bufReplace) : null;
+    const ph = paramList(dialect, 5).join(', ');
+    await adapter.run(
+      `INSERT INTO counterindex_journal (chain_id, block_number, entity, entity_id, prior_json) VALUES (${ph})`,
+      [curChainId, curBlock, entity, physicalId, priorJson],
+    );
+  }
+
+  async function restoreRaw(entity: string, raw: Record<string, unknown>): Promise<void> {
+    const table = tableName(entity);
+    const cols = Object.keys(raw);
+    const colList = cols.map(col).join(', ');
+    const ph = paramList(dialect, cols.length).join(', ');
+    const vals = cols.map((c) => raw[c]);
+    if (dialect === 'sqlite') {
+      await adapter.run(`INSERT OR REPLACE INTO ${table} (${colList}) VALUES (${ph})`, vals);
+    } else {
+      const conflict = multichain ? `(${col('chainId')}, "id")` : `("id")`;
+      const keyCols = multichain ? ['id', 'chainId'] : ['id'];
+      const updates = cols.filter((c) => !keyCols.includes(c)).map((c) => `${col(c)} = EXCLUDED.${col(c)}`).join(', ');
+      await adapter.run(
+        `INSERT INTO ${table} (${colList}) VALUES (${ph}) ON CONFLICT ${conflict} DO UPDATE SET ${updates}`, vals,
+      );
+    }
+  }
+
   function assertKnown(entity: string): EntityDef {
     return schema.getEntity(entity); // throws if unknown
+  }
+
+  /** Write/advance the checkpoint row. Shared by writeBlockCheckpoint + rollback. */
+  async function writeCheckpointRow(blockNumber: number, tipBlock: number | undefined, blockTimestamp: number | undefined, metaChainId: number | undefined): Promise<void> {
+    const now = Date.now();
+    const metaId = checkpointId(metaChainId);
+    if (dialect === 'sqlite') {
+      await adapter.run(
+        `INSERT OR REPLACE INTO counterindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
+        [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+      );
+    } else {
+      await adapter.run(
+        `INSERT INTO counterindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET
+           last_block = EXCLUDED.last_block, tip_block = EXCLUDED.tip_block,
+           last_block_ts = EXCLUDED.last_block_ts, updated_at = EXCLUDED.updated_at`,
+        [metaId, blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+      );
+    }
   }
 
   // Change notification — simple pub/sub, no external dependency
@@ -273,13 +593,205 @@ export async function createStore(
     for (const handler of changeHandlers) handler(event);
   }
 
-  return {
-    async get(entity, id) {
-      const def = assertKnown(entity);
+  // --- Per-block write batching (M13) ------------------------------------
+  // The indexer brackets each block's writes with beginBatch()/flushBatch()
+  // INSIDE the block transaction. While a batch is open, set/update/delete
+  // accumulate in `writeBuf` and get() reads the buffer first (read-your-
+  // writes), so a block that writes N rows commits as a handful of multi-row
+  // upserts instead of N single-row round-trips — the dominant cost on a
+  // networked Postgres. One block = one chain, so entries are keyed by chain+id.
+  // Prior-row journalling still runs exactly once per key at first touch (via
+  // journalOnce), capturing the pre-block value, so reorg rollback is unaffected.
+  type Pending =
+    & { entity: string; id: string; chainId?: number }
+    & ({ op: 'set'; data: Record<string, unknown> } | { op: 'delete' });
+  let batching = false;
+  const writeBuf = new Map<string, Pending>();
+  const journalled = new Set<string>();   // keys journalled this batch (first-touch only)
+  const bk = (entity: string, id: string, chainId?: number): string =>
+    `${entity}\u0000${chainId ?? ''}\u0000${id}`;
+
+  /** Journal the pre-block prior for a key once per batch (keeps rollback correct). */
+  async function journalOnce(entity: string, id: string, chainId?: number): Promise<void> {
+    if (reorgDepth <= 0) return;
+    const k = bk(entity, id, chainId);
+    if (journalled.has(k)) return;
+    journalled.add(k);
+    await journalPrior(entity, id);
+  }
+
+  /** The JS-typed record a set() would notify / a buffered get() would return. */
+  function typedRecord(def: EntityDef, id: string, data: Record<string, unknown>): Record<string, unknown> {
+    const record: Record<string, unknown> = { id };
+    for (const [f, fieldDef] of Object.entries(def)) {
+      record[f] = data[f] !== undefined ? data[f] : null;
+      if (record[f] !== null && record[f] !== undefined) {
+        record[f] = deserialise(serialise(record[f], fieldDef.type, dialect), fieldDef.type);
+      }
+    }
+    return record;
+  }
+
+  // A multi-row statement must stay under the driver's bind-parameter ceiling
+  // (SQLite ~32766, Postgres 65535). Chunk large blocks so one statement never
+  // exceeds this; the whole flush still runs in the caller's single transaction.
+  const MAX_PARAMS = 20000;
+
+  /** Write the buffered mutations: chunked multi-row upserts per entity, grouped deletes. */
+  async function flushWrites(): Promise<void> {
+    if (writeBuf.size === 0) return;
+    const sets = new Map<string, Pending[]>();
+    const dels = new Map<string, string[]>();
+    for (const p of writeBuf.values()) {
+      if (p.op === 'set') {
+        const arr = sets.get(p.entity) ?? [];
+        arr.push(p); sets.set(p.entity, arr);
+      } else {
+        const arr = dels.get(p.entity) ?? [];
+        arr.push(p.id); dels.set(p.entity, arr);
+      }
+    }
+    writeBuf.clear();
+    const t0 = Date.now();
+    let rows = 0;
+    for (const [entity, pend] of sets) {
+      const def = schema.getEntity(entity);
+      const fields = Object.keys(def);
       const table = tableName(entity);
+      const colList = ['"id"', ...fields.map(col)].join(', ');
+      const perRow = fields.length + 1;
+      const chunkRows = Math.max(1, Math.floor(MAX_PARAMS / perRow));
+      const conflict = multichain ? `(${col('chainId')}, "id")` : `("id")`;
+      const keyCols = multichain ? ['id', 'chainId'] : ['id'];
+      const updates = fields.filter((f) => !keyCols.includes(f)).map((f) => `${col(f)} = EXCLUDED.${col(f)}`).join(', ');
+      for (let i = 0; i < pend.length; i += chunkRows) {
+        const chunk = pend.slice(i, i + chunkRows);
+        const tuples: string[] = [];
+        const params: unknown[] = [];
+        for (const p of chunk) {
+          if (p.op !== 'set') continue;
+          tuples.push(`(${paramList(dialect, perRow, params.length + 1).join(', ')})`);
+          params.push(p.id, ...fields.map((f) => serialise(p.data[f], def[f].type, dialect)));
+        }
+        // Upsert on the PK only (see buildUpsert) so a `unique` field raises
+        // instead of silently replacing — same statement on both dialects.
+        await adapter.run(`INSERT INTO ${table} (${colList}) VALUES ${tuples.join(', ')} ON CONFLICT ${conflict} DO UPDATE SET ${updates}`, params);
+      }
+      rows += pend.length;
+    }
+    for (const [entity, ids] of dels) {
+      const table = tableName(entity);
+      // One block = one chain, so scope deletes to the current chain in multichain mode.
+      const chunkIds = multichain ? MAX_PARAMS - 1 : MAX_PARAMS;
+      for (let i = 0; i < ids.length; i += chunkIds) {
+        const chunk = ids.slice(i, i + chunkIds);
+        const ph = paramList(dialect, chunk.length).join(', ');
+        const chainSql = multichain ? ` AND ${col('chainId')} = ${param(dialect, chunk.length + 1)}` : '';
+        await adapter.run(`DELETE FROM ${table} WHERE "id" IN (${ph})${chainSql}`, multichain ? [...chunk, curChainId] : chunk);
+      }
+      rows += ids.length;
+    }
+    logger.trace('store', 'flushBatch', { entities: sets.size + dels.size, rows, elapsed_ms: Date.now() - t0 });
+  }
+
+  // --- Server-side query builder (M17): push filter/order/paginate into SQL --
+  // Field names are validated against the schema and emitted via col() (quoted,
+  // never interpolated from user input); values are bound as parameters. bigint
+  // is stored as TEXT, so range/order CAST to NUMERIC for numeric semantics —
+  // exact on Postgres; SQLite NUMERIC is exact to ~2^53, approximate beyond.
+  function validField(entity: string, def: EntityDef, field: string): FieldType {
+    if (field === 'id') return 'string';
+    const fd = def[field];
+    if (!fd) throw new Error(`Unknown field "${field}" on entity "${entity}"`);
+    return fd.type;
+  }
+  const numCast = (expr: string): string => `CAST(${expr} AS NUMERIC)`;
+  const likeEscape = (v: string): string => v.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+  interface WherePart { sql: string; params: unknown[]; next: number }
+
+  function buildWhere(entity: string, def: EntityDef, where: StoreFilter[] | undefined, chainId: number | undefined, start: number): WherePart {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    let n = start;
+    const ph = (): string => param(dialect, n++);
+    if (chainId !== undefined) { clauses.push(`${col('chainId')} = ${ph()}`); params.push(chainId); }
+    for (const f of where ?? []) {
+      const type = validField(entity, def, f.field);
+      if (f.op === 'in') {
+        const vals = Array.isArray(f.value) ? f.value : [f.value];
+        if (vals.length === 0) { clauses.push('1 = 0'); continue; }   // IN () matches nothing
+        const placeholders = vals.map((v) => { params.push(serialise(v, type, dialect)); return ph(); });
+        clauses.push(`${col(f.field)} IN (${placeholders.join(', ')})`);
+        continue;
+      }
+      if (f.op === 'contains' || f.op === 'starts_with' || f.op === 'ends_with') {
+        const e = likeEscape(String(f.value));
+        params.push(f.op === 'contains' ? `%${e}%` : f.op === 'starts_with' ? `${e}%` : `%${e}`);
+        clauses.push(`${col(f.field)} LIKE ${ph()} ESCAPE '\\'`);
+        continue;
+      }
+      params.push(serialise(f.value, type, dialect));
+      const p = ph();
+      const big = type === 'bigint';
+      const lhs = big ? numCast(col(f.field)) : col(f.field);
+      const rhs = big ? numCast(p) : p;
+      switch (f.op) {
+        case 'eq':  clauses.push(`${col(f.field)} = ${p}`); break;        // eq on TEXT bigint is exact + uses the index
+        case 'not': clauses.push(`${col(f.field)} <> ${p}`); break;
+        case 'gt':  clauses.push(`${lhs} > ${rhs}`); break;
+        case 'lt':  clauses.push(`${lhs} < ${rhs}`); break;
+        case 'gte': clauses.push(`${lhs} >= ${rhs}`); break;
+        case 'lte': clauses.push(`${lhs} <= ${rhs}`); break;
+      }
+    }
+    return { sql: clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '', params, next: n };
+  }
+
+  function orderExpr(field: string, type: FieldType): string {
+    return type === 'bigint' ? numCast(col(field)) : col(field);
+  }
+
+  /** `ORDER BY <field> <dir>, id <dir>` — the id tiebreaker keeps keyset paging stable. */
+  function orderClause(entity: string, def: EntityDef, orderBy: string | undefined, dir: 'asc' | 'desc'): string {
+    const d = dir === 'desc' ? 'DESC' : 'ASC';
+    if (!orderBy || orderBy === 'id') return ` ORDER BY "id" ${d}`;
+    const type = validField(entity, def, orderBy);
+    return ` ORDER BY ${orderExpr(orderBy, type)} ${d}, "id" ${d}`;
+  }
+
+  /** Keyset predicate: rows strictly after (sortValue, id) in the order. */
+  function keysetClause(entity: string, def: EntityDef, orderBy: string | undefined, dir: 'asc' | 'desc', cursor: { sortValue: unknown; id: string }, start: number): WherePart {
+    const params: unknown[] = [];
+    let n = start;
+    const ph = (): string => param(dialect, n++);
+    const cmp = dir === 'desc' ? '<' : '>';
+    if (!orderBy || orderBy === 'id') {
+      params.push(cursor.id);
+      return { sql: `"id" ${cmp} ${ph()}`, params, next: n };
+    }
+    const type = validField(entity, def, orderBy);
+    const oe = orderExpr(orderBy, type);
+    const big = type === 'bigint';
+    params.push(serialise(cursor.sortValue, type, dialect)); const s1 = big ? numCast(ph()) : ph();
+    params.push(serialise(cursor.sortValue, type, dialect)); const s2 = big ? numCast(ph()) : ph();
+    params.push(cursor.id); const idp = ph();
+    return { sql: `(${oe} ${cmp} ${s1} OR (${oe} = ${s2} AND "id" ${cmp} ${idp}))`, params, next: n };
+  }
+
+  return {
+    async get(entity, id, chainId) {
+      const def = assertKnown(entity);
+      if (batching) {
+        // Read-your-writes: an open batch sees its own un-flushed mutations.
+        const pending = writeBuf.get(bk(entity, id, chainId));
+        if (pending) return pending.op === 'delete' ? undefined : typedRecord(def, id, pending.data);
+      }
+      const table = tableName(entity);
+      const c = chainClause(chainId, 2);
       const row = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}${c.sql}`,
+        [id, ...c.params],
       );
       if (!row) return undefined;
       return deserialiseRow(row, def);
@@ -287,31 +799,57 @@ export async function createStore(
 
     async set(entity, id, data) {
       const def = assertKnown(entity);
+      if (batching) {
+        // Buffer the write; the pre-block prior is journalled once at first touch.
+        const chainId = data['chainId'] as number | undefined;
+        await journalOnce(entity, id, chainId);
+        writeBuf.set(bk(entity, id, chainId), { entity, id, chainId, op: 'set', data });
+        notify({ entity, id, record: typedRecord(def, id, data), operation: 'set' });
+        return;
+      }
       const table = tableName(entity);
       const fields = Object.keys(def);
       const values = [id, ...fields.map((f) => serialise(data[f], def[f].type, dialect))];
+      await journalPrior(entity, id);
       const t0 = Date.now();
-      await adapter.run(buildUpsert(table, fields, dialect), values);
+      await adapter.run(buildUpsert(table, fields, dialect, multichain), values);
       logger.trace('store', 'set', { entity, id, elapsed_ms: Date.now() - t0 });
-
-      // Notify with the JS-typed record (not the serialised SQL form)
-      const record: Record<string, unknown> = { id };
-      for (const [f, fieldDef] of Object.entries(def)) {
-        record[f] = data[f] !== undefined ? data[f] : null;
-        // Normalise so consumers always get typed values (bigint, boolean, etc.)
-        if (record[f] !== null && record[f] !== undefined) {
-          record[f] = deserialise(serialise(record[f], fieldDef.type, dialect), fieldDef.type);
-        }
-      }
-      notify({ entity, id, record, operation: 'set' });
+      notify({ entity, id, record: typedRecord(def, id, data), operation: 'set' });
     },
 
-    async update(entity, id, partial) {
+    async update(entity, id, partial, chainId) {
       const def = assertKnown(entity);
+      if (batching) {
+        const key = bk(entity, id, chainId);
+        const pending = writeBuf.get(key);
+        let current: Record<string, unknown> | undefined;
+        if (pending) {
+          current = pending.op === 'delete' ? undefined : { ...pending.data };
+        } else {
+          const cSelB = chainClause(chainId, 2);
+          const row = await adapter.get<Record<string, unknown>>(
+            `SELECT * FROM ${tableName(entity)} WHERE "id" = ${param(dialect, 1)}${cSelB.sql}`,
+            [id, ...cSelB.params],
+          );
+          current = row ? deserialiseRow(row, def) : undefined;
+        }
+        if (!current) throw new Error(`${entity} with id "${id}" not found`);
+        await journalOnce(entity, id, chainId);
+        const merged: Record<string, unknown> = { ...current };
+        delete merged['id'];
+        for (const [field, value] of Object.entries(partial)) {
+          if (field in def) merged[field] = value;
+        }
+        if (multichain) merged['chainId'] = chainId;
+        writeBuf.set(key, { entity, id, chainId, op: 'set', data: merged });
+        notify({ entity, id, record: typedRecord(def, id, merged), operation: 'update' });
+        return;
+      }
       const table = tableName(entity);
+      const cSel = chainClause(chainId, 2);
       const existing = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}${cSel.sql}`,
+        [id, ...cSel.params],
       );
       if (!existing) throw new Error(`${entity} with id "${id}" not found`);
 
@@ -325,55 +863,99 @@ export async function createStore(
       }
       if (setClauses.length === 0) return;
 
+      await journalPrior(entity, id);
       const whereParam = param(dialect, setValues.length + 1);
+      const cUpd = chainClause(chainId, setValues.length + 2);
       const t0 = Date.now();
       await adapter.run(
-        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ${whereParam}`,
-        [...setValues, id],
+        `UPDATE ${table} SET ${setClauses.join(', ')} WHERE "id" = ${whereParam}${cUpd.sql}`,
+        [...setValues, id, ...cUpd.params],
       );
       logger.trace('store', 'update', { entity, id, fields: setClauses.length, elapsed_ms: Date.now() - t0 });
 
       // Re-read the full row so the notification has the complete merged record
+      const cRe = chainClause(chainId, 2);
       const updated = await adapter.get<Record<string, unknown>>(
-        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `SELECT * FROM ${table} WHERE "id" = ${param(dialect, 1)}${cRe.sql}`,
+        [id, ...cRe.params],
       );
       notify({ entity, id, record: updated ? deserialiseRow(updated, def) : null, operation: 'update' });
     },
 
-    async delete(entity, id) {
+    async delete(entity, id, chainId) {
       assertKnown(entity);
+      if (batching) {
+        await journalOnce(entity, id, chainId);
+        writeBuf.set(bk(entity, id, chainId), { entity, id, chainId, op: 'delete' });
+        notify({ entity, id, record: null, operation: 'delete' });
+        return;
+      }
       const table = tableName(entity);
+      await journalPrior(entity, id);
+      const c = chainClause(chainId, 2);
       const t0 = Date.now();
       await adapter.run(
-        `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}`,
-        [id],
+        `DELETE FROM ${table} WHERE "id" = ${param(dialect, 1)}${c.sql}`,
+        [id, ...c.params],
       );
       logger.trace('store', 'delete', { entity, id, elapsed_ms: Date.now() - t0 });
       notify({ entity, id, record: null, operation: 'delete' });
     },
 
-    async list(entity) {
+    async list(entity, chainId) {
       const def = assertKnown(entity);
+      if (batching) await flushWrites();   // aggregate reads see this block's writes
       const table = tableName(entity);
-      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}`);
+      const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
+      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
       return rows.map((r) => deserialiseRow(r, def));
     },
 
-    async count(entity) {
+    async count(entity, chainId) {
       assertKnown(entity);
+      if (batching) await flushWrites();
       const table = tableName(entity);
-      const row = await adapter.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
-      return row?.n ?? 0;
+      const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
+      const row = await adapter.get<{ n: number | string }>(`SELECT COUNT(*) AS n FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
+      return Number(row?.n ?? 0);   // Postgres returns COUNT(*) (bigint) as a string
     },
 
-    async find(entity, predicate) {
+    async query(entity, opts) {
       const def = assertKnown(entity);
+      if (batching) await flushWrites();
       const table = tableName(entity);
-      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}`);
-      return rows
-        .map((r) => deserialiseRow(r, def))
-        .filter(predicate);
+      const dir = opts.orderDirection ?? 'asc';
+      const w = buildWhere(entity, def, opts.where, opts.chainId, 1);
+      let sql = `SELECT * FROM ${table}${w.sql}`;
+      const params = [...w.params];
+      let n = w.next;
+      if (opts.cursor) {
+        const k = keysetClause(entity, def, opts.orderBy, dir, opts.cursor, n);
+        sql += `${w.sql ? ' AND' : ' WHERE'} ${k.sql}`;
+        params.push(...k.params); n = k.next;
+      }
+      sql += orderClause(entity, def, opts.orderBy, dir);
+      if (opts.limit !== undefined) { sql += ` LIMIT ${param(dialect, n++)}`; params.push(opts.limit); }
+      const rows = await adapter.all<Record<string, unknown>>(sql, params);
+      return rows.map((r) => deserialiseRow(r, def));
+    },
+
+    async countWhere(entity, where, chainId) {
+      const def = assertKnown(entity);
+      if (batching) await flushWrites();
+      const table = tableName(entity);
+      const w = buildWhere(entity, def, where, chainId, 1);
+      const row = await adapter.get<{ n: number | string }>(`SELECT COUNT(*) AS n FROM ${table}${w.sql}`, w.params);
+      return Number(row?.n ?? 0);   // Postgres returns COUNT(*) (bigint) as a string
+    },
+
+    async find(entity, predicate, chainId) {
+      const def = assertKnown(entity);
+      if (batching) await flushWrites();
+      const table = tableName(entity);
+      const where = chainId !== undefined ? ` WHERE ${col('chainId')} = ${param(dialect, 1)}` : '';
+      const rows = await adapter.all<Record<string, unknown>>(`SELECT * FROM ${table}${where}`, chainId !== undefined ? [chainId] : []);
+      return rows.map((r) => deserialiseRow(r, def)).filter(predicate);
     },
 
     onChange(handler) {
@@ -381,38 +963,133 @@ export async function createStore(
       return () => { changeHandlers.delete(handler); };
     },
 
-    async writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp) {
-      const now = Date.now();
+    beginBatch() {
+      batching = true;
+      writeBuf.clear();
+      journalled.clear();
+    },
+
+    async flushBatch() {
+      // Always close the batch, even if the flush throws: the block transaction
+      // will roll back, and the next beginBatch() must start from clean state.
+      try {
+        await flushWrites();
+      } finally {
+        batching = false;
+        writeBuf.clear();
+        journalled.clear();
+      }
+    },
+
+    async writeBlockCheckpoint(blockNumber, tipBlock, blockTimestamp, chainId) {
+      await writeCheckpointRow(blockNumber, tipBlock, blockTimestamp, chainId);
+    },
+
+    async readCheckpoint(chainId) {
+      const row = await adapter.get<{ last_block: number; tip_block: number | null; last_block_ts: number | null }>(
+        `SELECT last_block, tip_block, last_block_ts FROM counterindex_meta WHERE id = ${param(dialect, 1)}`,
+        [checkpointId(chainId)],
+      );
+      if (!row) return undefined;
+      // Postgres returns BIGINT columns as strings — coerce to number.
+      return {
+        lastBlock:   Number(row.last_block),
+        tipBlock:    row.tip_block     != null ? Number(row.tip_block)     : undefined,
+        lastBlockTs: row.last_block_ts != null ? Number(row.last_block_ts) : undefined,
+      };
+    },
+
+    enableReorg(finalityDepth) {
+      reorgDepth = finalityDepth;
+    },
+
+    setReorgContext(blockNumber, chainId) {
+      curBlock = blockNumber;
+      curChainId = chainId;
+    },
+
+    async rollbackToBlock(blockNumber, chainId) {
+      // Deep-reorg guard (M11): if the blocks we must restore (> blockNumber)
+      // were already pruned past finality, we CANNOT roll back correctly. Detect
+      // and stop loudly rather than silently diverge. The blockhash log is dense
+      // (one row per processed block) and pruned together with the journal, so
+      // its oldest row marks the retained floor.
+      const floorRow = await adapter.get<{ m: number | string | null }>(
+        `SELECT MIN(block_number) AS m FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)}`,
+        [chainId],
+      );
+      const floor = floorRow?.m != null ? Number(floorRow.m) : null;
+      if (floor !== null && blockNumber + 1 < floor) {
+        throw new DeepReorgError(blockNumber, floor, chainId);
+      }
+
+      // ATOMIC rollback (M11): the journal replay, the journal/blockhash cleanup
+      // AND the checkpoint rewind all run in ONE transaction. A crash mid-rollback
+      // rolls the whole thing back — on restart the journal is intact and the
+      // rollback simply re-runs, so state can never half-rewind. The checkpoint is
+      // rewound here (not by the caller) so it can't diverge from the data.
+      await adapter.transaction(async () => {
+        // Replay the journal for blocks after the fork in reverse write order:
+        // restoring each prior row (last restore wins) leaves each entity at its
+        // state as of `blockNumber`. prior_json === null means "did not exist".
+        const entries = await adapter.all<{ entity: string; entity_id: string; prior_json: string | null }>(
+          `SELECT entity, entity_id, prior_json FROM counterindex_journal
+           WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}
+           ORDER BY seq DESC`,
+          [chainId, blockNumber],
+        );
+        for (const e of entries) {
+          if (e.prior_json === null) {
+            const cf = multichain ? ` AND ${col('chainId')} = ${param(dialect, 2)}` : '';
+            await adapter.run(`DELETE FROM ${tableName(e.entity)} WHERE "id" = ${param(dialect, 1)}${cf}`, multichain ? [e.entity_id, chainId] : [e.entity_id]);
+          } else {
+            await restoreRaw(e.entity, JSON.parse(e.prior_json, bufRevive) as Record<string, unknown>);
+          }
+        }
+        await adapter.run(
+          `DELETE FROM counterindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+          [chainId, blockNumber],
+        );
+        await adapter.run(
+          `DELETE FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number > ${param(dialect, 2)}`,
+          [chainId, blockNumber],
+        );
+        await writeCheckpointRow(blockNumber, undefined, undefined, multichain ? chainId : undefined);
+      });
+    },
+
+    async recordBlockHash(chainId, blockNumber, blockHash) {
       if (dialect === 'sqlite') {
         await adapter.run(
-          `INSERT OR REPLACE INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at) VALUES (?, ?, ?, ?, ?)`,
-          ['singleton', blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+          `INSERT OR REPLACE INTO counterindex_blockhash (chain_id, block_number, block_hash) VALUES (?, ?, ?)`,
+          [chainId, blockNumber, blockHash],
         );
       } else {
         await adapter.run(
-          `INSERT INTO opindex_meta (id, last_block, tip_block, last_block_ts, updated_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (id) DO UPDATE SET
-             last_block    = EXCLUDED.last_block,
-             tip_block     = EXCLUDED.tip_block,
-             last_block_ts = EXCLUDED.last_block_ts,
-             updated_at    = EXCLUDED.updated_at`,
-          ['singleton', blockNumber, tipBlock ?? null, blockTimestamp ?? null, now],
+          `INSERT INTO counterindex_blockhash (chain_id, block_number, block_hash) VALUES ($1, $2, $3)
+           ON CONFLICT (chain_id, block_number) DO UPDATE SET block_hash = EXCLUDED.block_hash`,
+          [chainId, blockNumber, blockHash],
         );
       }
     },
 
-    async readCheckpoint() {
-      const row = await adapter.get<{ last_block: number; tip_block: number | null; last_block_ts: number | null }>(
-        `SELECT last_block, tip_block, last_block_ts FROM opindex_meta WHERE id = ${param(dialect, 1)}`,
-        ['singleton'],
+    async getBlockHash(chainId, blockNumber) {
+      const row = await adapter.get<{ block_hash: string }>(
+        `SELECT block_hash FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number = ${param(dialect, 2)}`,
+        [chainId, blockNumber],
       );
-      if (!row) return undefined;
-      return {
-        lastBlock:   row.last_block,
-        tipBlock:    row.tip_block    ?? undefined,
-        lastBlockTs: row.last_block_ts ?? undefined,
-      };
+      return row?.block_hash;
+    },
+
+    async pruneReorgData(chainId, belowBlock) {
+      await adapter.run(
+        `DELETE FROM counterindex_journal WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
+        [chainId, belowBlock],
+      );
+      await adapter.run(
+        `DELETE FROM counterindex_blockhash WHERE chain_id = ${param(dialect, 1)} AND block_number <= ${param(dialect, 2)}`,
+        [chainId, belowBlock],
+      );
     },
   };
 }

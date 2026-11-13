@@ -59,8 +59,9 @@ async function seedPools(store: Awaited<ReturnType<typeof makeStore>>) {
   });
 }
 
-// Inline base64 cursor helpers (mirror what graphql.ts does)
-const encodeCursor = (id: string) => Buffer.from(id, 'utf8').toString('base64');
+// Inline keyset cursor helper (mirrors graphql.ts: base64 of {i: id, s: sortValue}).
+const encodeCursor = (id: string, sortValue: string = id) =>
+  Buffer.from(JSON.stringify({ i: id, s: sortValue }), 'utf8').toString('base64');
 
 // ---------------------------------------------------------------------------
 // Schema shape
@@ -296,6 +297,12 @@ describe('pools() — where filters', () => {
     expect(poolIds(r)).toEqual(['pool-2']);
   });
 
+  it('_in membership filter', async () => {
+    const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { id_in: ["pool-1", "pool-3"] }) { nodes { id } } }` });
+    expect(r.errors).toBeUndefined();
+    expect(poolIds(r).sort()).toEqual(['pool-1', 'pool-3']);
+  });
+
   it('BigInt field filter with string literal', async () => {
     const r = await graphql({ schema: gqlSchema, source: `{ pools(where: { reserve0_gt: "500000" }) { nodes { id } } }` });
     expect(r.errors).toBeUndefined();
@@ -432,14 +439,22 @@ describe('pools() — cursor pagination', () => {
     expect((r.data!['pools'] as { totalCount: number }).totalCount).toBe(3);
   });
 
-  it('unknown cursor returns items from beginning', async () => {
-    const badCursor = encodeCursor('nonexistent-id');
+  it('keyset: a cursor past the end returns nothing (old whole-table code returned page 1)', async () => {
+    const past = encodeCursor('pool-9', 'pool-9');   // sorts after pool-3
     const r = await graphql({
       schema: gqlSchema,
-      source: `{ pools(orderBy: id, orderDirection: asc, first: 10, after: "${badCursor}") { nodes { id } } }`,
+      source: `{ pools(orderBy: id, orderDirection: asc, first: 10, after: "${past}") { nodes { id } } }`,
     });
     expect(r.errors).toBeUndefined();
-    // cursor not found → no slice, returns all
+    expect((r.data!['pools'] as { nodes: { id: string }[] }).nodes.length).toBe(0);
+  });
+
+  it('keyset: a cursor before the start returns all rows', async () => {
+    const before = encodeCursor('aaaa', 'aaaa');     // sorts before pool-1
+    const r = await graphql({
+      schema: gqlSchema,
+      source: `{ pools(orderBy: id, orderDirection: asc, first: 10, after: "${before}") { nodes { id } } }`,
+    });
     expect((r.data!['pools'] as { nodes: { id: string }[] }).nodes.length).toBe(3);
   });
 });

@@ -3,10 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { OpnetChainMeta } from '../src/chains/opnet/types.js';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
-import { WsEventSource } from '../src/wsSource.js';
-import { registerDecoder, DECODER_REGISTRY } from '../src/decoders/eventDecoders.js';
+import { WsEventSource } from '../src/chains/opnet/wsSource.js';
+import { registerDecoder, DECODER_REGISTRY } from '../src/chains/opnet/decoders.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -110,7 +111,7 @@ describe('WsEventSource', () => {
 
   // ── subscribe() — basic delivery ─────────────────────────────────────────
 
-  it('delivers a well-formed DecodedEvent to onEvent', async () => {
+  it('delivers a well-formed ChainEvent to onEvent', async () => {
     const source = new WsEventSource(url);
     const received: object[] = [];
 
@@ -173,9 +174,9 @@ describe('WsEventSource', () => {
     expect(Array.from(captured!)).toEqual([0x01, 0x02, 0xff]);
   });
 
-  // ── subscribe() — op-index decoder takes priority ───────────────────────────
+  // ── subscribe() — counter-index decoder takes priority ───────────────────────────
 
-  it('uses op-index registered decoder when available', async () => {
+  it('uses counter-index registered decoder when available', async () => {
     // Register a decoder for 'PriorityEvent' that returns a known result
     const originalSize = DECODER_REGISTRY.size;
     registerDecoder('PriorityEvent', () => ({ custom: 'decoded' }));
@@ -198,7 +199,7 @@ describe('WsEventSource', () => {
 
   // ── subscribe() — unknown event names produce null decoded ───────────────
 
-  it('returns null decoded when no op-index decoder is registered', async () => {
+  it('returns null decoded when no counter-index decoder is registered', async () => {
     const source = new WsEventSource(url);
     let captured: Record<string, unknown> | null | undefined;
 
@@ -220,8 +221,8 @@ describe('WsEventSource', () => {
     let burned: unknown;
 
     const stop = source.subscribe(1, async (e) => {
-      gas    = e.gasUsed;
-      burned = e.burnedBitcoin;
+      gas    = (e.chainMeta as OpnetChainMeta).gasUsed;
+      burned = (e.chainMeta as OpnetChainMeta).burnedBitcoin;
     });
 
     await new Promise((r) => setTimeout(r, 30));

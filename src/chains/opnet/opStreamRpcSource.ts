@@ -16,11 +16,13 @@
  */
 
 import WebSocket from 'ws';
-import type { EventSource, EventSourceFilters, UnsubscribeFn } from './source.js';
-import type { DecodedEvent } from './types.js';
+import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
+import type { ChainEvent } from '../../types.js';
 import type { WsEventSourceOptions } from './wsSource.js';
-import { decodeEvent } from './decoders/eventDecoders.js';
+import { opnetDecoder } from './opnetDecoder.js';
 import { normaliseFromAddress } from './p2op.js';
+import { OPNET_CHAIN_ID, OPNET_NETWORK } from './constants.js';
+import type { OpnetChainMeta } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -133,16 +135,17 @@ function hexToUint8Array(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(padded, 'hex'));
 }
 
-/** Map a fully-enriched RPC block array to DecodedEvent[]. */
+/** Map a fully-enriched RPC block array to ChainEvent[]. */
 function mapBlocksToEvents(
   blocks:  RpcBlockRange[],
   filters?: EventSourceFilters,
-): DecodedEvent[] {
-  const out: DecodedEvent[] = [];
+): ChainEvent[] {
+  const out: ChainEvent[] = [];
 
   for (const block of blocks) {
     const blockTimestamp = block.time ?? undefined;
     const blockNumber    = Number(block.height);
+    const blockHash      = block.hash ?? '';
 
     for (const tx of block.transactions as RpcTxFull[]) {
       if (!tx.events?.length) continue;
@@ -181,23 +184,29 @@ function mapBlocksToEvents(
           normaliseFromAddress(tx.from);
 
         out.push({
+          chainId:         OPNET_CHAIN_ID,
+          network:         OPNET_NETWORK,
           blockNumber,
+          blockHash,
+          blockTimestamp,
           txHash:          tx.hash,
+          txIndex:         tx.index,
+          logIndex:        logIndex++,
           contractAddress: ev.contractAddress,
           eventName:       ev.type,
           eventRaw,
-          decoded:         decodeEvent(ev.type, eventRaw),
+          decoded:         opnetDecoder.decode({ raw: eventRaw, eventName: ev.type })?.decoded ?? null,
           dataLength:      eventRaw.length,
-          logIndex:        logIndex++,
-          blockTimestamp,
-          txIndex:         tx.index,
-          fromAddress,
-          fromAddressPubkey,
-          gasUsed:         tx.gasUsed      ? hexToBigInt(tx.gasUsed)      : undefined,
-          burnedBitcoin:   tx.burnedBitcoin ? hexToBigInt(tx.burnedBitcoin) : undefined,
-          failed,
-          revertReason:    tx.revert ?? undefined,
           txEvents,
+          chainMeta: {
+            kind:              'opnet',
+            fromAddress,
+            fromAddressPubkey,
+            gasUsed:         tx.gasUsed      ? hexToBigInt(tx.gasUsed)      : undefined,
+            burnedBitcoin:   tx.burnedBitcoin ? hexToBigInt(tx.burnedBitcoin) : undefined,
+            failed,
+            revertReason:    tx.revert ?? undefined,
+          } as OpnetChainMeta,
         });
       }
     }
@@ -206,28 +215,34 @@ function mapBlocksToEvents(
   return out;
 }
 
-/** Map a WS WebhookEvent to a DecodedEvent (mirrors WsEventSource.toDecodedEvent). */
-function wsEventToDecoded(raw: OpStreamWebhookEvent): DecodedEvent {
+/** Map a WS WebhookEvent to a ChainEvent (mirrors WsEventSource.toChainEvent). */
+function wsEventToDecoded(raw: OpStreamWebhookEvent): ChainEvent {
   const eventRaw = hexToUint8Array(raw.eventRaw);
   const { address: fromAddress, pubkeyHex: fromAddressPubkey } =
     normaliseFromAddress(raw.fromAddress);
   return {
+    chainId:         OPNET_CHAIN_ID,
+    network:         OPNET_NETWORK,
     blockNumber:     raw.blockNumber,
+    blockHash:       '',
+    blockTimestamp:  raw.blockTimestamp,
     txHash:          raw.txHash,
+    txIndex:         raw.txIndex,
+    logIndex:        raw.logIndex,
     contractAddress: raw.contractAddress,
     eventName:       raw.eventName,
     eventRaw,
-    decoded:         decodeEvent(raw.eventName, eventRaw),
+    decoded:         opnetDecoder.decode({ raw: eventRaw, eventName: raw.eventName })?.decoded ?? null,
     dataLength:      raw.dataLength ?? eventRaw.length,
-    logIndex:        raw.logIndex,
-    blockTimestamp:  raw.blockTimestamp,
-    txIndex:         raw.txIndex,
-    fromAddress,
-    fromAddressPubkey,
-    gasUsed:         raw.gasUsed      != null ? BigInt(raw.gasUsed)      : undefined,
-    burnedBitcoin:   raw.burnedBitcoin != null ? BigInt(raw.burnedBitcoin) : undefined,
-    failed:          raw.failed,
-    revertReason:    raw.revertReason ?? undefined,
+    chainMeta: {
+      kind:              'opnet',
+      fromAddress,
+      fromAddressPubkey,
+      gasUsed:         raw.gasUsed      != null ? BigInt(raw.gasUsed)      : undefined,
+      burnedBitcoin:   raw.burnedBitcoin != null ? BigInt(raw.burnedBitcoin) : undefined,
+      failed:          raw.failed,
+      revertReason:    raw.revertReason ?? undefined,
+    } as OpnetChainMeta,
   };
 }
 
@@ -303,7 +318,7 @@ export class OpStreamRpcEventSource implements EventSource {
     fromBlock: number,
     toBlock:   number,
     filters?:  EventSourceFilters,
-  ): AsyncIterable<DecodedEvent> {
+  ): AsyncIterable<ChainEvent> {
     let chunkEnd = toBlock;
 
     // Up to 20 attempts: aggressive halving handles blocks with thousands of
@@ -349,7 +364,7 @@ export class OpStreamRpcEventSource implements EventSource {
         // there is nothing we can do — skip it with a warning.
         if (chunkEnd <= fromBlock) {
           // eslint-disable-next-line no-console
-          console.warn(`[op-index] OpStreamRpcEventSource: skipping single dense block ${fromBlock} (server limit exceeded)`);
+          console.warn(`[counter-index] OpStreamRpcEventSource: skipping single dense block ${fromBlock} (server limit exceeded)`);
           this.onBlockSkipped?.(fromBlock);
           return;
         }
@@ -373,7 +388,7 @@ export class OpStreamRpcEventSource implements EventSource {
     fromBlock: number,
     toBlock:   number,
     filters?:  EventSourceFilters,
-  ): AsyncIterable<DecodedEvent> {
+  ): AsyncIterable<ChainEvent> {
     for (let f = fromBlock; f <= toBlock; ) {
       const end = Math.min(f + this.chunkSize - 1, toBlock);
       yield* this.fetchChunk(f, end, filters);
@@ -385,7 +400,7 @@ export class OpStreamRpcEventSource implements EventSource {
 
   subscribe(
     fromBlock: number,
-    onEvent:   (e: DecodedEvent) => Promise<void>,
+    onEvent:   (e: ChainEvent) => Promise<void>,
     options:   { pollIntervalMs?: number } = {},
   ): UnsubscribeFn {
     const intervalMs = options.pollIntervalMs ?? this.pollIntervalMs;
@@ -401,7 +416,7 @@ export class OpStreamRpcEventSource implements EventSource {
 
   private _subscribeWsWithFallback(
     fromBlock:  number,
-    onEvent:    (e: DecodedEvent) => Promise<void>,
+    onEvent:    (e: ChainEvent) => Promise<void>,
     intervalMs: number,
   ): UnsubscribeFn {
     let stopped     = false;
@@ -416,7 +431,7 @@ export class OpStreamRpcEventSource implements EventSource {
     const startPollFallback = (): void => {
       if (stopped || stopPoll) return;
       // eslint-disable-next-line no-console
-      console.warn('[op-index] OpStreamRpcEventSource: WS unavailable — falling back to polling');
+      console.warn('[counter-index] OpStreamRpcEventSource: WS unavailable — falling back to polling');
       stopPoll = this._subscribePoll(fromBlock, onEvent, intervalMs);
     };
 
@@ -503,7 +518,7 @@ export class OpStreamRpcEventSource implements EventSource {
 
   private _subscribePoll(
     fromBlock:  number,
-    onEvent:    (e: DecodedEvent) => Promise<void>,
+    onEvent:    (e: ChainEvent) => Promise<void>,
     intervalMs: number,
   ): UnsubscribeFn {
     let lastBlock = fromBlock - 1;
@@ -522,7 +537,7 @@ export class OpStreamRpcEventSource implements EventSource {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[op-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
+        console.warn(`[counter-index] subscribe poll error (will retry in ${intervalMs / 1000}s): ${msg}`);
       }
       if (!stopped) setTimeout(() => { void poll(); }, intervalMs);
     };

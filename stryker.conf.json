@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "concurrency": 2,
+  "mutate": [
+    "src/decoder.ts",
+    "src/chains/evm/evmDecoder.ts",
+    "src/chains/opnet/opnetDecoder.ts"
+  ],
+  "reporters": ["clear-text", "progress"],
+  "clearTextReporter": { "maxTestsToLog": 0 },
+  "thresholds": { "high": 85, "low": 70, "break": 60 }
+}

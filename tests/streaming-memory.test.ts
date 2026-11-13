@@ -20,13 +20,13 @@ import { defineSchema } from '../src/schema.js';
 import { createIndexer } from '../src/indexer.js';
 import { createTestAdapter } from '../src/adapter.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
-import type { DecodedEvent } from '../src/types.js';
+import type { ChainEvent } from '../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeEvent(blockNumber: number, i: number): DecodedEvent {
+function makeEvent(blockNumber: number, i: number): ChainEvent {
   return {
     blockNumber,
     txHash:          `0xtx${blockNumber}_${i}`,
@@ -91,9 +91,12 @@ describe('streaming — lazy consumption', () => {
 
     expect(stats.eventsProcessed).toBe(TOTAL);
     expect(dispatched).toBe(TOTAL);
-    // The generator is consumed one event at a time — at most 2 in flight
-    // (yielded one step ahead of the await inside the for-await loop).
-    expect(maxInFlight).toBeLessThanOrEqual(2);
+    // M10 atomicity: the indexer buffers ONE block's events so the whole block
+    // commits in a single transaction, then dispatches them when the next block
+    // starts. Memory stays bounded by the largest block — NOT the whole range:
+    // in-flight peaks at ~one block (EPB), nowhere near TOTAL.
+    expect(maxInFlight).toBeLessThanOrEqual(EPB + 2);
+    expect(maxInFlight).toBeLessThan(TOTAL / 10);
   });
 
   it('processes all blocks and writes checkpoint for each', async () => {

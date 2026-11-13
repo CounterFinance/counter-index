@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * op-index CLI — scaffold a new op-index indexer project.
+ * counter-index CLI — scaffold a new counter-index indexer project.
  *
  * Usage:
- *   npx @opnet-devs/op-index init [project-name]
+ *   npx @counterfinance/counter-index init [project-name]
  *
  * Generates a ready-to-run starter project in ./<project-name>/ next to wherever
  * the command is run from. Refuses to write into a non-empty directory.
@@ -20,7 +20,7 @@ import { cwd, argv, exit } from 'node:process';
 const [,, command, ...rest] = argv;
 
 if (command !== 'init') {
-  console.error(`Usage: op-index init [project-name]`);
+  console.error(`Usage: counter-index init [project-name]`);
   exit(1);
 }
 
@@ -30,14 +30,14 @@ const projectDir  = resolve(cwd(), projectName);
 if (existsSync(projectDir)) {
   const entries = readdirSync(projectDir);
   if (entries.length > 0) {
-    console.error(`[op-index] Error: directory "${projectDir}" is not empty.`);
+    console.error(`[counter-index] Error: directory "${projectDir}" is not empty.`);
     console.error('  Choose a different project name or empty the directory first.');
     exit(1);
   }
 }
 
-console.log(`[op-index] Scaffolding new indexer: ${projectName}`);
-console.log(`[op-index] Writing to: ${projectDir}\n`);
+console.log(`[counter-index] Scaffolding new indexer: ${projectName}`);
+console.log(`[counter-index] Writing to: ${projectDir}\n`);
 
 // ---------------------------------------------------------------------------
 // File templates
@@ -55,7 +55,7 @@ const files = {
     "build": "tsc"
   },
   "dependencies": {
-    "@opnet-devs/op-index": "^0.1.0",
+    "@counterfinance/counter-index": "^0.1.0",
     "opnet": "^1.0.0"
   },
   "devDependencies": {
@@ -97,7 +97,7 @@ dist/
 `,
 
   '.env.example': `OPSTREAM_DB_PATH=/data/opstream.db
-OPINDEX_DB_PATH=/data/opindex.db
+COUNTERINDEX_DB_PATH=/data/counterindex.db
 OPSTREAM_WS_URL=ws://localhost:8080
 FROM_BLOCK=941400
 PORT=4000
@@ -155,7 +155,7 @@ CMD ["node", "dist/main.js"]
       - chain_data:/data
     environment:
       - OPSTREAM_DB_PATH=/data/opstream.db
-      - OPINDEX_DB_PATH=/data/opindex.db
+      - COUNTERINDEX_DB_PATH=/data/counterindex.db
       - FROM_BLOCK=941400
       - PORT=4000
     ports:
@@ -170,11 +170,11 @@ volumes:
   'src/main.ts': `import {
   defineSchema, createIndexer,
   DbEventSource, openSqlite,
-} from '@opnet-devs/op-index';
+} from '@counterfinance/counter-index';
 import { registerTransferHandlers } from './handlers/transfers.js';
 
 const OPSTREAM_DB = process.env['OPSTREAM_DB_PATH'] ?? '/data/opstream.db';
-const OPINDEX_DB  = process.env['OPINDEX_DB_PATH']  ?? '/data/opindex.db';
+const COUNTERINDEX_DB  = process.env['COUNTERINDEX_DB_PATH']  ?? '/data/counterindex.db';
 const FROM_BLOCK  = Number(process.env['FROM_BLOCK'] ?? '941400');
 const PORT        = Number(process.env['PORT']        ?? '4000');
 
@@ -195,7 +195,7 @@ const schema = defineSchema({
 });
 
 const source  = new DbEventSource(openSqlite(OPSTREAM_DB));
-const sink    = openSqlite(OPINDEX_DB);
+const sink    = openSqlite(COUNTERINDEX_DB);
 const indexer = await createIndexer({ schema, sink, source });
 
 registerTransferHandlers(indexer);
@@ -213,7 +213,7 @@ process.on('SIGTERM', async () => {
 });
 `,
 
-  'src/handlers/transfers.ts': `import type { Indexer } from '@opnet-devs/op-index';
+  'src/handlers/transfers.ts': `import type { Indexer } from '@counterfinance/counter-index';
 
 export function registerTransferHandlers(indexer: Indexer): void {
   indexer.on('Transferred', async (event, ctx) => {

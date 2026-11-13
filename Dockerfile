@@ -1,6 +1,6 @@
-# op-index — Dockerfile template for indexer apps built on op-index.
+# counter-index — Dockerfile template for indexer apps built on counter-index.
 #
-# op-index is a library published to npm. Copy this file to your indexer
+# counter-index is a library published to npm. Copy this file to your indexer
 # project and adjust the CMD if your entry point differs from dist/main.js.
 #
 #   docker build -t my-indexer .
