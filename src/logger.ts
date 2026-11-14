@@ -60,10 +60,12 @@ export interface LoggerOptions {
 }
 
 function formatValue(v: unknown): string {
-  if (typeof v === 'bigint') return v.toString();
   if (v === null || v === undefined) return String(v);
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v as string | number | boolean);
+  if (typeof v === 'bigint' || typeof v === 'symbol') return v.toString();
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'string') return v;
+  if (typeof v === 'function') return '[Function]';
+  return JSON.stringify(v);   // objects
 }
 
 /**
