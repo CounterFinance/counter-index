@@ -7,7 +7,73 @@ once, and every later run replays it from disk with zero calls to the source. Ed
 a handler, restart, and a re-sync over an already-cached range hits the cache, not
 the RPC.
 
-## Use it
+## One command: `counter-index dev`
+
+```bash
+npx counter-index dev src/dev.ts
+```
+
+Runs your entry under `tsx watch`, restarting on every save, with the dev event
+cache switched on (it sets `COUNTERINDEX_DEV=1` and points `COUNTERINDEX_DEV_ENTRY`
+at your file). There is no in-process hot-module-replacement: it is a full
+restart, made cheap by two things, the cache (no re-fetch) and checkpoint resume
+(no re-processing when nothing changed). A full restart is simpler and more
+reliable than HMR, and once fetching and re-processing are off the table the
+restart cost is a Node boot, not a chain sync.
+
+Your entry opts into the cache and resume with a few helpers:
+
+```ts
+// src/dev.ts
+import {
+  createIndexer, createCachedSource, openSqlite,
+  devCachePath, devStatePath, devResumeFrom, devReady, devOnError,
+} from '@counterfinance/counter-index';
+
+const source = await createCachedSource(mySource, { path: devCachePath() });
+const indexer = await createIndexer({
+  schema, source, sink: openSqlite(devStatePath()), onError: devOnError,
+});
+indexer.on('Transfer', async (e, ctx) => { /* edit me and save */ });
+
+const { from, resumed } = await devResumeFrom(indexer.store, FROM, TO);
+await indexer.sync(from, TO);
+await indexer.serve({ port: 4000 });
+devReady(resumed ? 'resumed from checkpoint' : 'full replay');
+```
+
+`devReady()` prints a clean `⚡ counter-index reloaded in Xms` line on each restart.
+
+## Incremental replay
+
+The derived-state sink (`devStatePath()`) is keyed by a fingerprint of your entry
+file:
+
+- **Restart without editing** -> same fingerprint -> same sink. `devResumeFrom`
+  finds the checkpoint and resumes from `lastBlock + 1`, re-processing only the
+  new blocks.
+- **Edit a handler** -> the fingerprint changes -> a fresh sink -> `devResumeFrom`
+  sees no checkpoint and replays the whole range, from the event cache, with no
+  re-fetch.
+
+So a no-op restart is near-instant even over a large cached range, and an actual
+handler edit correctly rebuilds all derived state.
+
+## Readable handler errors
+
+Pass `devOnError` as the indexer's `onError` to render a handler throw as a short,
+legible block instead of a wall of framework frames:
+
+```
+✖ handler error in "Swap" @ block 18000042 tx 0xabc…#3
+  bad reserve math at block 18000042
+    at <anonymous> (src/dev.ts:21:13)
+```
+
+A thrown handler still aborts its block (the per-block atomicity guarantee) and
+the sync, so in the dev loop you read the error, fix it, and save to restart.
+
+## Use it manually (without the CLI)
 
 Wrap your source in `createCachedSource`, point the sink at a throwaway database,
 and run your entry file under `tsx watch` so a save restarts the process:
