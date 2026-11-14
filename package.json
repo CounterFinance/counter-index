@@ -53,7 +53,8 @@
     "dogfood:solana": "tsx dogfood/solana.ts",
     "dogfood:candles": "tsx dogfood/candles.ts",
     "dogfood:serving": "tsx dogfood/serving.ts",
-    "dogfood:dev-loop": "tsx dogfood/dev-loop.ts"
+    "dogfood:dev-loop": "tsx dogfood/dev-loop.ts",
+    "dogfood:dev-incremental": "tsx dogfood/dev-incremental.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

@@ -32,6 +32,10 @@ export { buildReadPath, type ReadPathOptions, type RestOptions, type ReadRouter 
 // --- Dev-loop event cache (fast replay, no re-fetch) -----------------------
 
 export { createCachedSource, CachedEventSource, type CachedSourceOptions, type CacheStats } from './devcache.js';
+export {
+  isDevMode, devReady, devFingerprint, devCachePath, devStatePath, devResumeFrom, devOnError,
+  type DevResume,
+} from './dev.js';
 
 // --- Operability (health, metrics, tracing, retry) — M18 -------------------
 

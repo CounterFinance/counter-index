@@ -12,6 +12,7 @@
 import { mkdirSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { cwd, argv, exit } from 'node:process';
+import { spawn } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -19,11 +20,42 @@ import { cwd, argv, exit } from 'node:process';
 
 const [,, command, ...rest] = argv;
 
-if (command !== 'init') {
-  console.error(`Usage: counter-index init [project-name]`);
+if (command === 'dev') {
+  startDev(rest);
+} else if (command === 'init') {
+  runInit(rest);
+} else {
+  console.error('Usage:');
+  console.error('  counter-index init [project-name]   scaffold a new indexer');
+  console.error('  counter-index dev <entry.ts>        watch + fast-reload (event cache + checkpoint resume)');
   exit(1);
 }
 
+/**
+ * `counter-index dev <entry>`: run the entry under `tsx watch`, restarting on
+ * save. A full restart, made cheap by the dev event cache (no re-fetch) and
+ * checkpoint resume (no re-processing when nothing changed). Sets COUNTERINDEX_DEV
+ * so the dev helpers (devCachePath/devStatePath/devReady/...) switch on.
+ */
+function startDev(args) {
+  const entry = args[0];
+  if (!entry) {
+    console.error('Usage: counter-index dev <entry.ts>');
+    exit(1);
+    return;
+  }
+  const entryPath = resolve(cwd(), entry);
+  const banner = process.stdout.isTTY ? '\x1b[36m⚡ counter-index dev\x1b[0m' : 'counter-index dev';
+  console.log(`${banner}  watching ${entry}  (event cache on; Ctrl-C to stop)\n`);
+  const child = spawn('npx', ['tsx', 'watch', '--clear-screen=false', entryPath, ...args.slice(1)], {
+    stdio: 'inherit',
+    env: { ...process.env, COUNTERINDEX_DEV: '1', COUNTERINDEX_DEV_ENTRY: entryPath },
+  });
+  child.on('exit', (code) => exit(code ?? 0));
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+}
+
+function runInit(rest) {
 const projectName = rest[0] ?? basename(cwd());
 const projectDir  = resolve(cwd(), projectName);
 
@@ -264,3 +296,4 @@ Done! Next steps:
   # Edit src/main.ts and src/handlers/transfers.ts
   npm run dev
 `);
+}
