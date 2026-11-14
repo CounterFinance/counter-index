@@ -1,6 +1,10 @@
 {
   "name": "@counterfinance/counter-index",
   "version": "0.2.0",
+  "allowScripts": [
+    "better-sqlite3",
+    "esbuild"
+  ],
   "description": "Chain-neutral blockchain indexer framework: define a schema, handle events, query indexed data over GraphQL, REST, SQL-over-HTTP, and SSE. EVM-first, multi-chain, zero-codegen.",
   "license": "MIT",
   "type": "module",
@@ -48,7 +52,8 @@
     "dogfood:relationships": "tsx dogfood/relationships.ts",
     "dogfood:solana": "tsx dogfood/solana.ts",
     "dogfood:candles": "tsx dogfood/candles.ts",
-    "dogfood:serving": "tsx dogfood/serving.ts"
+    "dogfood:serving": "tsx dogfood/serving.ts",
+    "dogfood:dev-loop": "tsx dogfood/dev-loop.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

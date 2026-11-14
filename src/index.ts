@@ -29,6 +29,10 @@ export { defineCandles, candleEntity, candleBucket, type DefineCandlesOptions } 
 
 export { buildReadPath, type ReadPathOptions, type RestOptions, type ReadRouter } from './serving.js';
 
+// --- Dev-loop event cache (fast replay, no re-fetch) -----------------------
+
+export { createCachedSource, CachedEventSource, type CachedSourceOptions, type CacheStats } from './devcache.js';
+
 // --- Operability (health, metrics, tracing, retry) — M18 -------------------
 
 export {
