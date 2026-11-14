@@ -301,7 +301,8 @@ function paramList(dialect: 'sqlite' | 'postgres', count: number, start = 1): st
 function serialise(value: unknown, type: FieldType, dialect: 'sqlite' | 'postgres'): unknown {
   if (value === null || value === undefined) return null;
   switch (type) {
-    case 'bigint':  return typeof value === 'bigint' ? value.toString() : String(value as string | number | boolean);
+    case 'bigint':  return typeof value === 'bigint' || typeof value === 'number' ? value.toString()
+                         : typeof value === 'string' ? value : JSON.stringify(value);
     // Postgres has native BOOLEAN; SQLite stores as INTEGER (0/1).
     case 'boolean': return dialect === 'postgres' ? Boolean(value) : (value ? 1 : 0);
     default:        return value;
