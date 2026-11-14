@@ -100,6 +100,7 @@ const handle = await indexer.serve({ port: 4000, readPath: { rest: true, sql: tr
 | [Sources](docs/sources.md) | EVM, Solana, OPNET source adapters and the `createEventSource` factory |
 | [GraphQL](docs/graphql.md) | `serve()`, queries, cursor pagination, filters, subscriptions |
 | [Serving read path](docs/serving.md) | Cacheable REST, SQL-over-HTTP, and SSE live queries |
+| [Fast dev loop](docs/dev-loop.md) | Event caching so edit-restart-resync replays without re-fetching |
 | [Adding a chain](docs/adding-a-chain.md) | How to add a new chain adapter, with a checklist |
 | [Reorg design](docs/reorg-design.md) | Journal, rollback, fork detection, finality |
 | [Operations](docs/operations.md) | Health states, metrics, tracing, graceful shutdown |
@@ -121,6 +122,7 @@ const handle = await indexer.serve({ port: 4000, readPath: { rest: true, sql: tr
 - [x] GraphQL API: auto-generated schema, cursor pagination, filters, GraphiQL
 - [x] GraphQL subscriptions via `graphql-ws`
 - [x] Serving read path: cacheable REST, SQL-over-HTTP, SSE live queries
+- [x] Fast dev loop: persistent event cache replays edits without re-fetching
 - [x] Production ops: health-state machine, `/metrics`, tracing, graceful shutdown
 - [x] Config validation plus incremental schema migrations
 - [x] OHLCV candle aggregation (`defineCandles`)
