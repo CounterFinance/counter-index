@@ -4,15 +4,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
 async function indexesFor(table: string, schema: Schema<SchemaDefinition>): Promise<string[]> {
-  const db = new Database(':memory:');
-  await createStore(schema, new SqliteAdapter(db));
-  return (db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? AND name LIKE '%_idx'").all(table) as Array<{ name: string }>).map((r) => r.name);
+  const adapter = createTestAdapter();
+  await createStore(schema, adapter);
+  return (adapter.rawDb.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? AND name LIKE '%_idx'").all(table) as Array<{ name: string }>).map((r) => r.name);
 }
 
 describe('secondary indexes', () => {

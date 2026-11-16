@@ -5,8 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
-import { SqliteAdapter, type MinimalDbAdapter } from '../src/adapter.js';
+import { createTestAdapter, type MinimalDbAdapter } from '../src/adapter.js';
 import { createStore, DeepReorgError } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
@@ -28,7 +27,7 @@ async function seeded(adapter: MinimalDbAdapter) {
 
 describe('atomic rollback + checkpoint rewind', () => {
   it('rewinds data AND the checkpoint together', async () => {
-    const store = await seeded(new SqliteAdapter(new Database(':memory:')));
+    const store = await seeded(createTestAdapter());
     expect((await store.readCheckpoint())!.lastBlock).toBe(4);
 
     await store.rollbackToBlock(2, 0);
@@ -41,7 +40,7 @@ describe('atomic rollback + checkpoint rewind', () => {
 
 describe('crash during rollback → consistent (atomic)', () => {
   it('a failure mid-rollback leaves the pre-rollback state fully intact', async () => {
-    const inner = new SqliteAdapter(new Database(':memory:'));
+    const inner = createTestAdapter();
     let armed = false;
     const flaky: MinimalDbAdapter = {
       dialect: inner.dialect,
@@ -73,7 +72,7 @@ describe('crash during rollback → consistent (atomic)', () => {
 
 describe('deep-reorg detection', () => {
   it('throws DeepReorgError when the fork is below the retained finality window', async () => {
-    const store = await seeded(new SqliteAdapter(new Database(':memory:')));
+    const store = await seeded(createTestAdapter());
     // Finality pruning drops journal + hashes at/below block 2 — blocks 3,4 retained.
     await store.pruneReorgData(0, 2);
 
@@ -86,7 +85,7 @@ describe('deep-reorg detection', () => {
   });
 
   it('DeepReorgError carries the requested block + retained floor', async () => {
-    const store = await seeded(new SqliteAdapter(new Database(':memory:')));
+    const store = await seeded(createTestAdapter());
     await store.pruneReorgData(0, 2);
     await store.rollbackToBlock(0, 0).catch((e: unknown) => {
       expect(e).toBeInstanceOf(DeepReorgError);

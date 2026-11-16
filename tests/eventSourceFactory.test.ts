@@ -5,8 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter, type NodeSqliteAdapter } from '../src/adapter.js';
 import { DbEventSource } from '../src/chains/opnet/dbSource.js';
 import { RpcEventSource, type BlockProvider } from '../src/chains/opnet/rpcSource.js';
 import { createEventSource, probeOpStreamSchema } from '../src/chains/opnet/eventSourceFactory.js';
@@ -21,16 +20,15 @@ const OPSTREAM_SCHEMA = `
   CREATE TABLE IF NOT EXISTS events      (id INTEGER PRIMARY KEY AUTOINCREMENT, block_number INTEGER NOT NULL, tx_hash TEXT NOT NULL, contract_address TEXT NOT NULL, event_name TEXT NOT NULL, log_index INTEGER NOT NULL DEFAULT 0, event_raw BLOB NOT NULL, data_length INTEGER NOT NULL);
 `;
 
-function makeOpStreamAdapter(): SqliteAdapter {
-  const db = new Database(':memory:');
-  db.exec(OPSTREAM_SCHEMA);
-  return new SqliteAdapter(db);
+function makeOpStreamAdapter(): NodeSqliteAdapter {
+  const adapter = createTestAdapter();
+  adapter.rawDb.exec(OPSTREAM_SCHEMA);
+  return adapter;
 }
 
-function makeEmptyAdapter(): SqliteAdapter {
-  const db = new Database(':memory:');
-  // No tables — not OpStream-ready
-  return new SqliteAdapter(db);
+function makeEmptyAdapter(): NodeSqliteAdapter {
+  // No tables, not OpStream-ready
+  return createTestAdapter();
 }
 
 const stubRpc: BlockProvider = {
@@ -52,9 +50,8 @@ describe('probeOpStreamSchema', () => {
   });
 
   it('returns false when only some tables exist', async () => {
-    const db = new Database(':memory:');
-    db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY)'); // missing transactions + blocks
-    const adapter = new SqliteAdapter(db);
+    const adapter = createTestAdapter();
+    adapter.rawDb.exec('CREATE TABLE events (id INTEGER PRIMARY KEY)'); // missing transactions + blocks
     expect(await probeOpStreamSchema(adapter)).toBe(false);
   });
 });

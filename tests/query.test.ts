@@ -6,8 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 import type { MinimalDbAdapter } from '../src/adapter.js';
@@ -17,7 +16,7 @@ const schema = defineSchema({
 }) as Schema<SchemaDefinition>;
 
 async function seeded() {
-  const store = await createStore(schema, new SqliteAdapter(new Database(':memory:')));
+  const store = await createStore(schema, createTestAdapter());
   // amounts chosen so lexical != numeric order (10 < 2 lexically).
   await store.set('Tok', 'a', { amount: 2n, holder: '0xAA', block: 100 });
   await store.set('Tok', 'b', { amount: 10n, holder: '0xBB', block: 101 });
@@ -48,7 +47,7 @@ describe('store.query filters (pushed to SQL)', () => {
   });
 
   it('contains / starts_with / ends_with with LIKE escaping', async () => {
-    const store = await createStore(schema, new SqliteAdapter(new Database(':memory:')));
+    const store = await createStore(schema, createTestAdapter());
     await store.set('Tok', 'p', { amount: 1n, holder: 'a%b_c', block: 1 });
     await store.set('Tok', 'q', { amount: 1n, holder: 'axbyc', block: 1 });
     // `%` and `_` are literal, not wildcards → only 'a%b_c' matches.
@@ -107,7 +106,7 @@ describe('store.query keyset pagination', () => {
 describe('query is pushed to SQL (no whole-table load)', () => {
   it('emits a WHERE + LIMIT, not a bare SELECT *', async () => {
     const seenSql: string[] = [];
-    const inner = new SqliteAdapter(new Database(':memory:'));
+    const inner = createTestAdapter();
     const spy: MinimalDbAdapter = {
       dialect: inner.dialect,
       run: (sql, p) => inner.run(sql, p),
