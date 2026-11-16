@@ -301,14 +301,25 @@ with `DbEventSource`, where the filter is pushed into the SQL `WHERE` clause.
 The sink is where counter-index writes your `counterindex_*` tables. Open it independently of the source:
 
 ```ts
-import { openSqlite } from '@counterfinance/counter-index';
+import { openSqlite, openNodeSqlite } from '@counterfinance/counter-index';
 
-// SQLite
+// SQLite via better-sqlite3 (default; mature, native binary)
 const sink = openSqlite('/data/counterindex.db');
+
+// SQLite via Node's built-in node:sqlite (NO native dependency, clean install)
+const sink = openNodeSqlite('/data/counterindex.db');
 
 // Postgres
 const sink = await openPostgres(process.env.COUNTERINDEX_DB_URL!);
 ```
+
+`openNodeSqlite` is a drop-in for `openSqlite` backed by Node's built-in
+`node:sqlite` (Node >= 22.5), so it needs no native dependency and no compile
+step, avoiding the install-script approval some environments require for
+better-sqlite3. It is a validated drop-in (the store surface is tested for parity
+with better-sqlite3). `node:sqlite` is still flagged experimental in Node, so it
+stays opt-in and emits an experimental warning on first use; `openSqlite` remains
+the default until it stabilises.
 
 Pass the sink to `createIndexer`:
 
