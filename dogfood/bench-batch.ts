@@ -11,8 +11,7 @@
  *   npx tsx dogfood/bench-batch.ts
  */
 
-import Database from 'better-sqlite3';
-import { SqliteAdapter, type MinimalDbAdapter } from '../src/adapter.js';
+import { openSqlite, type MinimalDbAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
@@ -51,7 +50,7 @@ async function applyBlock(store: Awaited<ReturnType<typeof createStore>>): Promi
 }
 
 async function bench(batched: boolean): Promise<{ writes: number; reads: number; ms: number }> {
-  const adapter = new Counting(new SqliteAdapter(new Database(":memory:")));
+  const adapter = new Counting(openSqlite(":memory:"));
   const store = await createStore(schema, adapter);
   const baseW = adapter.writes, baseR = adapter.reads;   // skip DDL round-trips
   const t0 = performance.now();
@@ -74,7 +73,7 @@ console.log(`  reduction   ${factor(un.writes, ba.writes).padStart(15)}   ${fact
 
 // Correctness guard: both paths must land identical final balances.
 async function finalBalances(batched: boolean): Promise<string> {
-  const store = await createStore(schema, new SqliteAdapter(new Database(':memory:')));
+  const store = await createStore(schema, openSqlite(':memory:'));
   if (batched) store.beginBatch();
   await applyBlock(store);
   if (batched) await store.flushBatch();

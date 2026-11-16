@@ -6,10 +6,9 @@
  *   npx tsx dogfood/candles.ts
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer, defineCandles, candleEntity, candleBucket } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 
@@ -38,7 +37,7 @@ async function main(): Promise<void> {
     subscribe(): UnsubscribeFn { return () => {}; },
   };
 
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source });
+  const indexer = await createIndexer({ schema, sink: openSqlite(':memory:'), source });
   defineCandles(indexer, {
     entity: 'Candle1m', on: 'Swap', intervalSec: 60,
     price: (e) => e.decoded!['price'] as number,

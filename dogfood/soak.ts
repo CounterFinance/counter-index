@@ -10,10 +10,9 @@
  *   node --expose-gc ... for exact heap (optional; trend holds without it)
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 
@@ -49,7 +48,7 @@ const heapMB = (): number => {
 };
 
 async function main(): Promise<void> {
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source: streamSource() });
+  const indexer = await createIndexer({ schema, sink: openSqlite(':memory:'), source: streamSource() });
   indexer.on('T', async (e, ctx) => {
     const to = e.decoded!['to'] as string;
     const cur = await ctx.store.get('Balance', to);
