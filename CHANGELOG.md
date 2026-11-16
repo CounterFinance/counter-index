@@ -4,6 +4,10 @@ All notable changes to `@counterfinance/counter-index` are documented here.
 
 ---
 
+## [0.2.1] - 2026-11-16
+- release: 0.2.1 (#10)
+
+
 ## [0.2.0] - 2026-11-13
 
 Rebranded from `@opnet-collective/op-index` to `@counterfinance/counter-index`, and generalized from an OPNET-specific indexer into a chain-neutral, EVM-first one.
