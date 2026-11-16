@@ -27,7 +27,7 @@ table names will be taken from an **allow-list** (the schema), never interpolate
 
 ## Dependency posture
 - `npm audit --omit=dev`: **0 vulnerabilities** (checked).
-- Runtime deps are minimal (`bech32`, `better-sqlite3`, `graphql`, `postgres`);
+- Runtime deps are minimal and dependency-free of native binaries (`bech32`, `graphql`, `postgres`; SQLite uses the built-in `node:sqlite`);
   `viem`/`ws`/`graphql-ws` are **optional** peers, imported only in adapters.
 - Secrets (RPC/HyperSync tokens) come from env and are never logged.
 

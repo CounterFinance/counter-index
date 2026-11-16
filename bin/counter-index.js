@@ -12,6 +12,7 @@
 import { mkdirSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { cwd, argv, exit } from 'node:process';
+import { spawn } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
@@ -19,11 +20,42 @@ import { cwd, argv, exit } from 'node:process';
 
 const [,, command, ...rest] = argv;
 
-if (command !== 'init') {
-  console.error(`Usage: counter-index init [project-name]`);
+if (command === 'dev') {
+  startDev(rest);
+} else if (command === 'init') {
+  runInit(rest);
+} else {
+  console.error('Usage:');
+  console.error('  counter-index init [project-name]   scaffold a new indexer');
+  console.error('  counter-index dev <entry.ts>        watch + fast-reload (event cache + checkpoint resume)');
   exit(1);
 }
 
+/**
+ * `counter-index dev <entry>`: run the entry under `tsx watch`, restarting on
+ * save. A full restart, made cheap by the dev event cache (no re-fetch) and
+ * checkpoint resume (no re-processing when nothing changed). Sets COUNTERINDEX_DEV
+ * so the dev helpers (devCachePath/devStatePath/devReady/...) switch on.
+ */
+function startDev(args) {
+  const entry = args[0];
+  if (!entry) {
+    console.error('Usage: counter-index dev <entry.ts>');
+    exit(1);
+    return;
+  }
+  const entryPath = resolve(cwd(), entry);
+  const banner = process.stdout.isTTY ? '\x1b[36m⚡ counter-index dev\x1b[0m' : 'counter-index dev';
+  console.log(`${banner}  watching ${entry}  (event cache on; Ctrl-C to stop)\n`);
+  const child = spawn('npx', ['tsx', 'watch', '--clear-screen=false', entryPath, ...args.slice(1)], {
+    stdio: 'inherit',
+    env: { ...process.env, COUNTERINDEX_DEV: '1', COUNTERINDEX_DEV_ENTRY: entryPath },
+  });
+  child.on('exit', (code) => exit(code ?? 0));
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig));
+}
+
+function runInit(rest) {
 const projectName = rest[0] ?? basename(cwd());
 const projectDir  = resolve(cwd(), projectName);
 
@@ -103,15 +135,13 @@ FROM_BLOCK=941400
 PORT=4000
 `,
 
-  'Dockerfile': `# Two-stage build: compile TypeScript + native modules in stage 1, run compiled JS in stage 2.
+  'Dockerfile': `# Two-stage build: compile TypeScript in stage 1, run compiled JS in stage 2.
+# counter-index's default SQLite (node:sqlite) needs no native build tools.
 # Build context: parent directory of ${projectName}
 #   docker build -f ${projectName}/Dockerfile -t ${projectName} ..
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
-
-# Native addon build tools (required for better-sqlite3)
-RUN apk add --no-cache python3 make g++
 
 WORKDIR /build
 COPY package*.json ./
@@ -119,14 +149,13 @@ RUN npm install
 COPY src ./src
 COPY tsconfig.json ./
 RUN npm run build   # compiles src/ → dist/
-RUN npm prune --omit=dev  # strip devDeps, keep compiled native modules
+RUN npm prune --omit=dev
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:24-alpine
 RUN apk add --no-cache dumb-init
 WORKDIR /app
 
-# Copy pruned node_modules (includes compiled better-sqlite3 binary — no recompile needed)
 COPY --from=builder /build/package*.json ./
 COPY --from=builder /build/node_modules  ./node_modules
 COPY --from=builder /build/dist ./dist
@@ -264,3 +293,4 @@ Done! Next steps:
   # Edit src/main.ts and src/handlers/transfers.ts
   npm run dev
 `);
+}

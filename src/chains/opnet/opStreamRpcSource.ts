@@ -16,6 +16,7 @@
  */
 
 import WebSocket from 'ws';
+import { hexToBytes as hexToUint8Array } from '../../util/hex.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../../source.js';
 import type { ChainEvent } from '../../types.js';
 import type { WsEventSourceOptions } from './wsSource.js';
@@ -129,11 +130,6 @@ function base64ToUint8Array(b64: string): Uint8Array {
   return new Uint8Array(Buffer.from(b64, 'base64'));
 }
 
-function hexToUint8Array(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-  const padded = clean.length % 2 === 0 ? clean : '0' + clean;
-  return new Uint8Array(Buffer.from(padded, 'hex'));
-}
 
 /** Map a fully-enriched RPC block array to ChainEvent[]. */
 function mapBlocksToEvents(

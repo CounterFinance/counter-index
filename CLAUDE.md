@@ -37,7 +37,7 @@ Semver guide for this project:
 - **Vitest** — all new behaviour needs tests. Run `npm test` before declaring work done.
 - **ESLint** — configured in `eslint.config.mjs` (flat config, type-aware). Run `npm run lint` or `just lint`. Zero errors required; `no-console` and `no-explicit-any` are warnings only. Auto-fix: `just lint-fix`.
 - **ES modules** — `"type": "module"` in package.json. Use `.js` extensions in imports even for `.ts` source files.
-- **better-sqlite3** — synchronous SQLite driver for `DbEventSource`.
+- **SQLite** — default sink via Node's built-in `node:sqlite` (`openSqlite`, no native dep); better-sqlite3 is an optional peer via `openBetterSqlite`.
 
 ## Package architecture
 

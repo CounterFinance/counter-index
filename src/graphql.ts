@@ -115,8 +115,8 @@ function renderMetrics(status: Record<string, unknown>): string {
   for (const [k, v] of Object.entries(status)) {
     if (typeof v === 'number') { lines.push(`counterindex_${k} ${v}`); continue; }
     if (typeof v === 'boolean') { lines.push(`counterindex_${k} ${v ? 1 : 0}`); continue; }
-    if (k === 'health' && v && typeof v === 'object') { renderHealth(v as HealthLike, lines); continue; }
-    if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('counterindex_handler_latency_ms', v as HistogramLike, lines); continue; }
+    if (k === 'health' && v && typeof v === 'object') { renderHealth(v, lines); continue; }
+    if (k === 'handlerLatencyMs' && v && typeof v === 'object') { renderHistogram('counterindex_handler_latency_ms', v, lines); continue; }
     if (k === 'handlersByEvent' && v && typeof v === 'object') {
       for (const [event, s] of Object.entries(v as Record<string, { calls?: number; sumMs?: number }>)) {
         if (typeof s?.calls === 'number') lines.push(`counterindex_handler_calls{event="${event}"} ${s.calls}`);
@@ -390,7 +390,8 @@ export function serialiseRecord(
     if (val === undefined || val === null) {
       out[field] = null;
     } else if (fieldDef.type === 'bigint') {
-      out[field] = String(val as bigint);
+      out[field] = typeof val === 'bigint' || typeof val === 'number' ? val.toString()
+                 : typeof val === 'string' ? val : JSON.stringify(val);
     } else {
       out[field] = val;
     }
@@ -424,8 +425,8 @@ function makePushStream<T>(): PushStream<T> {
     },
     end() {
       done = true;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-      waiting?.({ value: undefined as any, done: true });
+       
+      waiting?.({ value: undefined, done: true });
     },
     [Symbol.asyncIterator](): AsyncIterator<T> {
       return {
@@ -568,7 +569,7 @@ export function buildGraphQLSchema(
           };
         },
         // The yielded value from subscribe IS the resolved field value
-        resolve: (record: unknown) => record as Record<string, unknown>,
+        resolve: (record: unknown) => record,
       };
     }
   }

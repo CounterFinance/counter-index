@@ -484,7 +484,7 @@ export async function createIndexer<S extends SchemaDefinition>(
       registry.on(eventName, (async (event: ChainEvent) => {
         const addr = extract(event);
         if (addr) await addDiscovered(event.chainId, addr, event.blockNumber);
-      }) as EventHandler);
+      }));
     },
 
     async processEvent(event) {
