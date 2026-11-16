@@ -4,10 +4,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { noopLogger, type IndexerLogger } from '../src/logger.js';
 import type { ChainEvent } from '../src/types.js';
 
@@ -21,7 +20,7 @@ function evt(name: string, block: number, id: string): ChainEvent {
   };
 }
 
-const sink = () => new SqliteAdapter(new Database(':memory:'));
+const sink = () => createTestAdapter();
 
 describe('named-handler perf attribution', () => {
   it('tracks per-event-name latency in handlerStats()', async () => {

@@ -5,15 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
 describe('incremental migration', () => {
   it('adds a new field as a column, preserving existing rows', async () => {
-    const db = new Database(':memory:');
-    const adapter = new SqliteAdapter(db);
+    const adapter = createTestAdapter();
 
     // v1: one field.
     const v1 = defineSchema({ Acct: { balance: { type: 'bigint' } } }) as Schema<SchemaDefinition>;
@@ -39,12 +37,11 @@ describe('incremental migration', () => {
   });
 
   it('is idempotent — re-opening the same schema does nothing', async () => {
-    const db = new Database(':memory:');
-    const adapter = new SqliteAdapter(db);
+    const adapter = createTestAdapter();
     const schema = defineSchema({ X: { v: { type: 'int' } } }) as Schema<SchemaDefinition>;
     await createStore(schema, adapter);
     await createStore(schema, adapter);   // must not throw
-    const cols = (db.prepare('PRAGMA table_info("counterindex_x")').all() as Array<{ name: string }>).map((r) => r.name);
+    const cols = (adapter.rawDb.prepare('PRAGMA table_info("counterindex_x")').all() as Array<{ name: string }>).map((r) => r.name);
     expect(cols).toEqual(['id', 'v']);
   });
 });

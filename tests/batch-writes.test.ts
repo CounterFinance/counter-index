@@ -5,14 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
 function store() {
   const schema = defineSchema({ Counter: { n: { type: 'int' } } }) as Schema<SchemaDefinition>;
-  return createStore(schema, new SqliteAdapter(new Database(':memory:')));
+  return createStore(schema, createTestAdapter());
 }
 
 describe('batched writes — read-your-writes', () => {

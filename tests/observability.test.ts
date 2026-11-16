@@ -4,10 +4,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 
 const schema = defineSchema({ Thing: { v: { type: 'int' } } });
@@ -22,7 +21,7 @@ function evt(id: string): ChainEvent {
 
 describe('observability', () => {
   it('counts entity writes and serves /health + /metrics', async () => {
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter() });
     indexer.on('E', async (e, ctx) => { await ctx.store.set('Thing', e.txHash, { v: 1 }); });
 
     await indexer.processEvents([evt('0xa'), evt('0xb'), evt('0xc')]);   // 3 upserts

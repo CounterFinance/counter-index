@@ -5,16 +5,15 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import type { ServeHandle, ServeOptions } from '../src/graphql.js';
 
 const schema = defineSchema({ Item: { v: { type: 'int' } } });
 
 async function serve(opts: ServeOptions): Promise<ServeHandle> {
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+  const indexer = await createIndexer({ schema, sink: createTestAdapter() });
   for (let i = 0; i < 50; i++) await indexer.store.set('Item', `i${i}`, { v: i });
   return indexer.serve(opts);
 }

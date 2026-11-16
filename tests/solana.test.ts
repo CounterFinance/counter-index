@@ -5,10 +5,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import {
   SolanaDecoder, anchorEventDiscriminator, SolanaLogSource, programDataPayloads,
   BorshReader, BorshWriter, base58Encode, type SolanaTx,
@@ -96,7 +95,7 @@ describe('SolanaLogSource → ChainEvent', () => {
       fetchSlots: async function* (from, to) { for (const t of txs) if (t.slot >= from && t.slot <= to) yield t; },
     });
 
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter(), source });
     let sawSolanaMeta = false;
     indexer.on('TransferEvent', async (e, ctx) => {
       const d = e.decoded!;

@@ -152,11 +152,22 @@ export function openBetterSqlite(path: string): SqliteAdapter {
 }
 
 /**
- * Create an in-memory SQLite adapter (better-sqlite3) for unit tests. Data is
+ * Create an in-memory SQLite adapter (the default node:sqlite backend) for unit
+ * tests. No native dependency, so the suite runs without better-sqlite3. Data is
  * lost when the process exits. Not for production use.
  */
-export function createTestAdapter(): SqliteAdapter {
-  return new SqliteAdapter(new (loadBetterSqlite())(':memory:'));
+export function createTestAdapter(): NodeSqliteAdapter {
+  return openSqlite(':memory:');
+}
+
+/** True when better-sqlite3 is installed (an optional peer); tests that need it skip otherwise. */
+export function betterSqliteAvailable(): boolean {
+  try {
+    nodeRequire.resolve('better-sqlite3');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

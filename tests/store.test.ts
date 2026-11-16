@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { defineSchema } from '../src/schema.js';
 import { createStore } from '../src/store.js';
-import { createTestAdapter, type SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter, type NodeSqliteAdapter } from '../src/adapter.js';
 import type { MinimalDbAdapter } from '../src/adapter.js';
 
 const schema = defineSchema({
@@ -38,7 +38,7 @@ describe('createStore', () => {
 
   it('creates counterindex_* prefixed tables', async () => {
     await createStore(schema, adapter);
-    const raw = (adapter as SqliteAdapter).rawDb;
+    const raw = (adapter as NodeSqliteAdapter).rawDb;
     const tables = raw.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'counterindex_%'`,
     ).all() as Array<{ name: string }>;
