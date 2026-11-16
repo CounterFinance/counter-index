@@ -15,6 +15,7 @@ import type { ChainEvent } from '../../types.js';
 import type { EvmChainMeta } from './types.js';
 import { EvmAbiDecoder } from './evmDecoder.js';
 import { withRetry, type RetryOptions } from '../../lifecycle.js';
+import { hexToBytes } from '../../util/hex.js';
 
 export interface EvmLogSourceOptions {
   /** EIP-155 chain id stamped on every event. */
@@ -53,8 +54,6 @@ export interface EvmLogSourceOptions {
   concurrency?: number;
 }
 
-const hexToBytes = (hex: string): Uint8Array =>
-  new Uint8Array(Buffer.from(hex.startsWith('0x') ? hex.slice(2) : hex, 'hex'));
 
 export class EvmLogSource implements EventSource, DynamicSource {
   private readonly client: PublicClient;

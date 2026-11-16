@@ -21,6 +21,7 @@
  */
 
 import WebSocket from 'ws';
+import { hexToBytes as hexToUint8Array } from '../../util/hex.js';
 import type { EventSource, UnsubscribeFn } from '../../source.js';
 import type { ChainEvent } from '../../types.js';
 import { opnetDecoder } from './opnetDecoder.js';
@@ -70,12 +71,6 @@ export interface WsEventSourceOptions {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function hexToUint8Array(hex: string): Uint8Array {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-  // Pad to even length
-  const padded = clean.length % 2 === 0 ? clean : '0' + clean;
-  return new Uint8Array(Buffer.from(padded, 'hex'));
-}
 
 function toChainEvent(raw: OpStreamWebhookEvent): ChainEvent {
   const eventRaw = hexToUint8Array(raw.eventRaw);
