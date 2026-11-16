@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import { openSqlite } from '../src/adapter.js';
 
 const TO = 60, EPB = 10, HOLDERS = 20, TOTAL = TO * EPB;   // 600 events
 const TSX = 'node_modules/.bin/tsx';
@@ -33,11 +33,11 @@ function run(db: string, crashAt: number): number {
 }
 
 function dump(db: string): string {
-  const d = new Database(db, { readonly: true });
+  const a = openSqlite(db, { readOnly: true });
   try {
-    const rows = d.prepare('SELECT holder, n FROM counterindex_balance ORDER BY holder').all();
+    const rows = a.rawDb.prepare('SELECT holder, n FROM counterindex_balance ORDER BY holder').all();
     return JSON.stringify(rows);
-  } catch { return '{}'; } finally { d.close(); }
+  } catch { return '{}'; } finally { a.close(); }
 }
 
 function main(): void {

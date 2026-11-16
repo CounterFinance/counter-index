@@ -7,8 +7,7 @@
  *   npx tsx dogfood/bench-query.ts
  */
 
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
@@ -17,7 +16,7 @@ const schema = defineSchema({
 }) as Schema<SchemaDefinition>;
 
 const N = 200_000;
-const store = await createStore(schema, new SqliteAdapter(new Database(':memory:')));
+const store = await createStore(schema, openSqlite(':memory:'));
 
 process.stdout.write(`  seeding ${N.toLocaleString()} rows…`);
 store.beginBatch();

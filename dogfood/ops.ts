@@ -7,10 +7,9 @@
  *   npx tsx dogfood/ops.ts
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import { jsonTracer } from '../src/lifecycle.js';
 import type { ChainEvent } from '../src/types.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
@@ -38,11 +37,12 @@ function source(toBlock: number): EventSource {
 const fail = (m: string): never => { console.error(`[dogfood:ops] FAIL — ${m}`); process.exit(1); };
 
 async function main(): Promise<void> {
-  const db = new Database(':memory:');
+  const adapter = openSqlite(':memory:');
+  const db = adapter.rawDb;
   const spans: Record<string, unknown>[] = [];
   const indexer = await createIndexer({
     schema,
-    sink: new SqliteAdapter(db),
+    sink: adapter,
     source: source(100),
     tracer: jsonTracer((l) => spans.push(l)),   // one span per block
   });
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   await indexer.shutdown();
   if (indexer.health().state !== 'stopped') fail(`expected stopped, got ${indexer.health().state}`);
   if (!hookRan) fail('onShutdown hook did not run');
-  if (db.open) fail('sink DB was not closed');
+  if (db.isOpen) fail('sink DB was not closed');
   let serverGone = false;
   try { await fetch('http://localhost:47970/health'); } catch { serverGone = true; }
   if (!serverGone) fail('server still accepting connections after shutdown');

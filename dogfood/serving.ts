@@ -14,10 +14,9 @@
  *   npx tsx dogfood/serving.ts
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 
 const schema = defineSchema({
   Balance: { holder: { type: 'string' }, amount: { type: 'bigint' } },
@@ -28,7 +27,7 @@ const ORIGIN = `http://localhost:${PORT}`;
 const fail = (m: string): never => { console.error(`[dogfood:serving] FAIL — ${m}`); process.exit(1); };
 
 async function main(): Promise<void> {
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+  const indexer = await createIndexer({ schema, sink: openSqlite(':memory:') });
   for (const [id, holder, amount] of [['a', '0xaaa', 100n], ['b', '0xbbb', 300n], ['c', '0xccc', 200n], ['d', '0xddd', 400n]] as const) {
     await indexer.store.set('Balance', id, { holder, amount });
   }

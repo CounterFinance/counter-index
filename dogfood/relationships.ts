@@ -6,10 +6,9 @@
  *   npx tsx dogfood/relationships.ts
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 
 const schema = defineSchema({
@@ -20,7 +19,7 @@ const schema = defineSchema({
 const fail = (m: string): never => { console.error(`[dogfood:relationships] FAIL — ${m}`); process.exit(1); };
 
 async function main(): Promise<void> {
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+  const indexer = await createIndexer({ schema, sink: openSqlite(':memory:') });
 
   // Seed a pool and three swaps referencing it (one dangling).
   await indexer.store.set('Pool', 'pool-wbtc-usdc', { token0: 'WBTC', token1: 'USDC', addr: '0xpool1' });
