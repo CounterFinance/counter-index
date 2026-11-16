@@ -38,6 +38,9 @@ what is deferred (HyperSync-accelerated backfill is tracked).
 
 - Node.js >= 24
 - A JSON-RPC endpoint for your chain (any EVM RPC, a Solana RPC, or an OPNET RPC / OpStream DB)
+- **No native dependencies by default**: SQLite uses Node's built-in `node:sqlite` and Postgres
+  is pure-JS, so `npm install` has no compile step. (better-sqlite3 is available as an optional
+  peer via `openBetterSqlite`.)
 
 ## Install
 
@@ -123,6 +126,7 @@ const handle = await indexer.serve({ port: 4000, readPath: { rest: true, sql: tr
 - [x] GraphQL subscriptions via `graphql-ws`
 - [x] Serving read path: cacheable REST, SQL-over-HTTP, SSE live queries
 - [x] Fast dev loop: persistent event cache replays edits without re-fetching
+- [x] Storage: SQLite (built-in `node:sqlite`, no native dep; or better-sqlite3) and Postgres
 - [x] Production ops: health-state machine, `/metrics`, tracing, graceful shutdown
 - [x] Config validation plus incremental schema migrations
 - [x] OHLCV candle aggregation (`defineCandles`)
