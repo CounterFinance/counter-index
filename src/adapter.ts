@@ -8,16 +8,30 @@
  * use and unit tests without OpStream.
  */
 
-import Database from 'better-sqlite3';
+import type BetterSqlite3 from 'better-sqlite3';
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createRequire } from 'node:module';
 import type { Sql } from 'postgres';
 
-/** Runtime require for Node builtins loaded lazily (keeps node:sqlite out of bundlers). */
+/**
+ * Runtime require for modules loaded lazily: node:sqlite (keeps it out of
+ * bundlers) and better-sqlite3 (an optional peer dependency — present only if the
+ * consumer installed it, so it must never be imported eagerly).
+ */
 const nodeRequire = createRequire(import.meta.url);
 
-type DB = ReturnType<typeof Database>;
+type DB = BetterSqlite3.Database;
+type BetterCtor = new (path: string, options?: BetterSqlite3.Options) => DB;
+const loadBetterSqlite = (): BetterCtor => {
+  try {
+    return nodeRequire('better-sqlite3') as BetterCtor;
+  } catch {
+    throw new Error(
+      "better-sqlite3 is not installed. Install it to use openBetterSqlite / SqliteAdapter, or use the default openSqlite (node:sqlite, no native dependency).",
+    );
+  }
+};
 
 // Narrow internal interface — avoids spreading into better-sqlite3's conditional rest type.
 type Stmt = {
@@ -107,11 +121,30 @@ export class SqliteAdapter implements MinimalDbAdapter {
  * Open a SQLite file as a MinimalDbAdapter. Creates parent directories as needed.
  * Sets WAL mode and busy timeout for concurrent access with OpStream.
  */
-export function openSqlite(path: string): SqliteAdapter {
+/**
+ * Open a SQLite database. Defaults to Node's built-in `node:sqlite` — NO native
+ * dependency, so a clean install with no compile step. For the mature
+ * better-sqlite3 native driver instead, use {@link openBetterSqlite} (install
+ * better-sqlite3 yourself; it is an optional peer dependency).
+ */
+export function openSqlite(path: string): NodeSqliteAdapter {
   const dir = dirname(path);
-  if (dir && dir !== '.' && !existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
+  if (dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const { DatabaseSync } = nodeRequire('node:sqlite') as { DatabaseSync: new (p: string) => NodeDb };
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 5000');
+  return new NodeSqliteAdapter(db);
+}
+
+/**
+ * Open a SQLite database on the better-sqlite3 native driver. better-sqlite3 is
+ * an optional peer dependency — install it yourself to use this.
+ */
+export function openBetterSqlite(path: string): SqliteAdapter {
+  const dir = dirname(path);
+  if (dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const Database = loadBetterSqlite();
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
@@ -119,11 +152,11 @@ export function openSqlite(path: string): SqliteAdapter {
 }
 
 /**
- * Create an in-memory SQLite adapter. For unit tests only — data is lost when
- * the process exits. Not for production use.
+ * Create an in-memory SQLite adapter (better-sqlite3) for unit tests. Data is
+ * lost when the process exits. Not for production use.
  */
 export function createTestAdapter(): SqliteAdapter {
-  return new SqliteAdapter(new Database(':memory:'));
+  return new SqliteAdapter(new (loadBetterSqlite())(':memory:'));
 }
 
 // ---------------------------------------------------------------------------
@@ -140,10 +173,10 @@ interface NodeDb {
 
 /**
  * SQLite adapter backed by Node's built-in `node:sqlite` — NO native dependency,
- * so a clean install with no compile step and no install-script approval. Same
- * dialect, SQL and behaviour as {@link SqliteAdapter}. `node:sqlite` is still
- * flagged experimental, so this is opt-in (`openNodeSqlite`); `openSqlite`
- * (better-sqlite3) stays the default until it stabilises.
+ * so a clean install with no compile step and no install-script approval. This is
+ * the default backend behind {@link openSqlite}; same dialect, SQL and behaviour
+ * as {@link SqliteAdapter} (which stays available via {@link openBetterSqlite} for
+ * the better-sqlite3 native driver). Validated for parity in tests/node-sqlite.test.ts.
  */
 export class NodeSqliteAdapter implements MinimalDbAdapter {
   readonly dialect = 'sqlite' as const;
@@ -189,22 +222,6 @@ export class NodeSqliteAdapter implements MinimalDbAdapter {
   close(): void {
     if (this.rawDb.isOpen) this.rawDb.close();
   }
-}
-
-/**
- * Open a SQLite database on Node's built-in `node:sqlite` (no native dependency).
- * node:sqlite is loaded with a runtime `require` (via createRequire), so merely
- * importing this package never touches the experimental module, and bundlers do
- * not try to resolve it. See {@link NodeSqliteAdapter}.
- */
-export function openNodeSqlite(path: string): NodeSqliteAdapter {
-  const dir = dirname(path);
-  if (dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const { DatabaseSync } = nodeRequire('node:sqlite') as { DatabaseSync: new (p: string) => NodeDb };
-  const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA busy_timeout = 5000');
-  return new NodeSqliteAdapter(db);
 }
 
 // ---------------------------------------------------------------------------

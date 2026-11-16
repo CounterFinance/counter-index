@@ -49,11 +49,11 @@ export {
 
 export {
   type MinimalDbAdapter,
-  SqliteAdapter,
+  NodeSqliteAdapter,
   openSqlite,
   createTestAdapter,
-  NodeSqliteAdapter,
-  openNodeSqlite,
+  SqliteAdapter,
+  openBetterSqlite,
   PostgresAdapter,
   openPostgres,
 } from './adapter.js';

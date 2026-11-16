@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { openNodeSqlite, createTestAdapter, type MinimalDbAdapter } from '../src/adapter.js';
+import { openSqlite, createTestAdapter, type MinimalDbAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
@@ -33,7 +33,7 @@ async function runStoreSurface(adapter: MinimalDbAdapter) {
 
 describe('NodeSqliteAdapter (node:sqlite, no native dependency)', () => {
   it('matches better-sqlite3 across the store surface', async () => {
-    const onNode = await runStoreSurface(await openNodeSqlite(':memory:'));
+    const onNode = await runStoreSurface(openSqlite(':memory:'));
     const onBetter = await runStoreSurface(createTestAdapter());
     expect(onNode).toEqual(onBetter);               // drop-in parity
 
@@ -46,7 +46,7 @@ describe('NodeSqliteAdapter (node:sqlite, no native dependency)', () => {
   });
 
   it('commits and rolls back transactions like SqliteAdapter', async () => {
-    const a = await openNodeSqlite(':memory:');
+    const a = openSqlite(':memory:');
     await a.exec('CREATE TABLE t (id TEXT PRIMARY KEY)');
     // commit
     await a.transaction(async () => { await a.run('INSERT INTO t VALUES (?)', ['ok']); });

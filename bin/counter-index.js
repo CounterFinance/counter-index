@@ -135,15 +135,13 @@ FROM_BLOCK=941400
 PORT=4000
 `,
 
-  'Dockerfile': `# Two-stage build: compile TypeScript + native modules in stage 1, run compiled JS in stage 2.
+  'Dockerfile': `# Two-stage build: compile TypeScript in stage 1, run compiled JS in stage 2.
+# counter-index's default SQLite (node:sqlite) needs no native build tools.
 # Build context: parent directory of ${projectName}
 #   docker build -f ${projectName}/Dockerfile -t ${projectName} ..
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 FROM node:24-alpine AS builder
-
-# Native addon build tools (required for better-sqlite3)
-RUN apk add --no-cache python3 make g++
 
 WORKDIR /build
 COPY package*.json ./
@@ -151,14 +149,13 @@ RUN npm install
 COPY src ./src
 COPY tsconfig.json ./
 RUN npm run build   # compiles src/ → dist/
-RUN npm prune --omit=dev  # strip devDeps, keep compiled native modules
+RUN npm prune --omit=dev
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:24-alpine
 RUN apk add --no-cache dumb-init
 WORKDIR /app
 
-# Copy pruned node_modules (includes compiled better-sqlite3 binary — no recompile needed)
 COPY --from=builder /build/package*.json ./
 COPY --from=builder /build/node_modules  ./node_modules
 COPY --from=builder /build/dist ./dist

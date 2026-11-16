@@ -64,6 +64,7 @@
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^1.6.1",
+    "better-sqlite3": "^12.0.0",
     "eslint": "^9.39.4",
     "fast-check": "^3.23.2",
     "graphql-ws": "^6.0.8",
@@ -76,14 +77,14 @@
   },
   "dependencies": {
     "bech32": "^2.0.0",
-    "better-sqlite3": "^12.0.0",
     "graphql": "^16.13.2",
     "postgres": "^3.4.9"
   },
   "peerDependencies": {
     "graphql-ws": "^6.0.0",
     "viem": "^2.21.0",
-    "ws": "^8.0.0"
+    "ws": "^8.0.0",
+    "better-sqlite3": "^12.0.0"
   },
   "peerDependenciesMeta": {
     "graphql-ws": {
@@ -93,6 +94,9 @@
       "optional": true
     },
     "viem": {
+      "optional": true
+    },
+    "better-sqlite3": {
       "optional": true
     }
   }
