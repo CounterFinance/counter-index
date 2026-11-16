@@ -11,7 +11,11 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createRequire } from 'node:module';
 import type { Sql } from 'postgres';
+
+/** Runtime require for Node builtins loaded lazily (keeps node:sqlite out of bundlers). */
+const nodeRequire = createRequire(import.meta.url);
 
 type DB = ReturnType<typeof Database>;
 
@@ -120,6 +124,87 @@ export function openSqlite(path: string): SqliteAdapter {
  */
 export function createTestAdapter(): SqliteAdapter {
   return new SqliteAdapter(new Database(':memory:'));
+}
+
+// ---------------------------------------------------------------------------
+// NodeSqliteAdapter — Node's built-in node:sqlite (no native dependency)
+// ---------------------------------------------------------------------------
+
+/** The slice of node:sqlite's DatabaseSync this adapter uses. */
+interface NodeDb {
+  prepare(sql: string): { run(...p: unknown[]): unknown; get(...p: unknown[]): unknown; all(...p: unknown[]): unknown[] };
+  exec(sql: string): void;
+  close(): void;
+  readonly isOpen: boolean;
+}
+
+/**
+ * SQLite adapter backed by Node's built-in `node:sqlite` — NO native dependency,
+ * so a clean install with no compile step and no install-script approval. Same
+ * dialect, SQL and behaviour as {@link SqliteAdapter}. `node:sqlite` is still
+ * flagged experimental, so this is opt-in (`openNodeSqlite`); `openSqlite`
+ * (better-sqlite3) stays the default until it stabilises.
+ */
+export class NodeSqliteAdapter implements MinimalDbAdapter {
+  readonly dialect = 'sqlite' as const;
+  private readonly _cache = new Map<string, ReturnType<NodeDb['prepare']>>();
+
+  constructor(public readonly rawDb: NodeDb) {}
+
+  private stmt(sql: string): ReturnType<NodeDb['prepare']> {
+    let s = this._cache.get(sql);
+    if (!s) { s = this.rawDb.prepare(sql); this._cache.set(sql, s); }
+    return s;
+  }
+
+  async run(sql: string, params: unknown[] = []): Promise<void> {
+    this.stmt(sql).run(...params);
+  }
+
+  async get<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T | undefined> {
+    const row = this.stmt(sql).get(...params) as Record<string, unknown> | undefined;
+    return row === undefined ? undefined : ({ ...row } as T);   // node:sqlite rows are null-prototype
+  }
+
+  async all<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+    return (this.stmt(sql).all(...params) as Record<string, unknown>[]).map((r) => ({ ...r }) as T);
+  }
+
+  async exec(sql: string): Promise<void> {
+    this.rawDb.exec(sql);
+  }
+
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    this.rawDb.exec('BEGIN');
+    try {
+      const result = await fn();
+      this.rawDb.exec('COMMIT');
+      return result;
+    } catch (err) {
+      this.rawDb.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  close(): void {
+    if (this.rawDb.isOpen) this.rawDb.close();
+  }
+}
+
+/**
+ * Open a SQLite database on Node's built-in `node:sqlite` (no native dependency).
+ * node:sqlite is loaded with a runtime `require` (via createRequire), so merely
+ * importing this package never touches the experimental module, and bundlers do
+ * not try to resolve it. See {@link NodeSqliteAdapter}.
+ */
+export function openNodeSqlite(path: string): NodeSqliteAdapter {
+  const dir = dirname(path);
+  if (dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const { DatabaseSync } = nodeRequire('node:sqlite') as { DatabaseSync: new (p: string) => NodeDb };
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 5000');
+  return new NodeSqliteAdapter(db);
 }
 
 // ---------------------------------------------------------------------------

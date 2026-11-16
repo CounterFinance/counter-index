@@ -52,6 +52,8 @@ export {
   SqliteAdapter,
   openSqlite,
   createTestAdapter,
+  NodeSqliteAdapter,
+  openNodeSqlite,
   PostgresAdapter,
   openPostgres,
 } from './adapter.js';
