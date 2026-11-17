@@ -10,10 +10,9 @@
  * docs/benchmarks.md).
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 import type { ChainEvent } from '../src/types.js';
 
@@ -43,7 +42,7 @@ const genSource: EventSource = {
 
 async function main(): Promise<void> {
   const schema = defineSchema({ Holder: { holder: { type: 'string' }, balance: { type: 'bigint' } } });
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source: genSource });
+  const indexer = await createIndexer({ schema, sink: openSqlite(':memory:'), source: genSource });
   indexer.on('Transfer', async (e, ctx) => {
     const d = e.decoded!;
     await ctx.store.set('Holder', d['holder'] as string, { holder: d['holder'] as string, balance: BigInt(d['amount'] as string) });

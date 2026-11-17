@@ -12,11 +12,10 @@
  * M4+ will extend this with a real EVM indexer driven against an anvil devnet.
  */
 
-import Database from 'better-sqlite3';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { SqliteAdapter, openSqlite } from '../src/adapter.js';
+import { openSqlite, type NodeSqliteAdapter } from '../src/adapter.js';
 import { DbEventSource } from '../src/chains/opnet/dbSource.js';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
@@ -56,8 +55,9 @@ const OPSTREAM_SCHEMA = `
   );
 `;
 
-function seedSource(): SqliteAdapter {
-  const db = new Database(':memory:');
+function seedSource(): NodeSqliteAdapter {
+  const adapter = openSqlite(':memory:');
+  const db = adapter.rawDb;
   db.exec(OPSTREAM_SCHEMA);
 
   const blk = db.prepare(`INSERT INTO blocks (block_number, block_hash, timestamp) VALUES (?, ?, ?)`);
@@ -77,7 +77,7 @@ function seedSource(): SqliteAdapter {
   ev.run(101, '0xtx2', '0xtoken1', 'Transferred', 0, t2, t2.length);
   ev.run(101, '0xtx3', '0xtoken2', 'Transferred', 0, t3, t3.length);
 
-  return new SqliteAdapter(db);
+  return adapter;
 }
 
 // ── Representative indexer: token transfers + running holder balances ────────

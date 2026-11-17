@@ -118,22 +118,26 @@ export class SqliteAdapter implements MinimalDbAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Open a SQLite file as a MinimalDbAdapter. Creates parent directories as needed.
- * Sets WAL mode and busy timeout for concurrent access with OpStream.
+ * Open a SQLite database as a MinimalDbAdapter, defaulting to Node's built-in
+ * `node:sqlite`: NO native dependency, so a clean install with no compile step.
+ * Creates parent directories as needed and sets WAL mode plus a busy timeout for
+ * concurrent access. Pass `{ readOnly: true }` to open an existing file read-only
+ * (no directory creation, no write pragmas). For the mature better-sqlite3 native
+ * driver instead, use {@link openBetterSqlite} (install better-sqlite3 yourself;
+ * it is an optional peer dependency).
  */
-/**
- * Open a SQLite database. Defaults to Node's built-in `node:sqlite` — NO native
- * dependency, so a clean install with no compile step. For the mature
- * better-sqlite3 native driver instead, use {@link openBetterSqlite} (install
- * better-sqlite3 yourself; it is an optional peer dependency).
- */
-export function openSqlite(path: string): NodeSqliteAdapter {
+export function openSqlite(path: string, options?: { readOnly?: boolean }): NodeSqliteAdapter {
+  const readOnly = options?.readOnly ?? false;
   const dir = dirname(path);
-  if (dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const { DatabaseSync } = nodeRequire('node:sqlite') as { DatabaseSync: new (p: string) => NodeDb };
-  const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA busy_timeout = 5000');
+  if (!readOnly && dir && dir !== '.' && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const { DatabaseSync } = nodeRequire('node:sqlite') as {
+    DatabaseSync: new (p: string, opts?: { readOnly?: boolean }) => NodeDb;
+  };
+  const db = readOnly ? new DatabaseSync(path, { readOnly: true }) : new DatabaseSync(path);
+  if (!readOnly) {
+    db.exec('PRAGMA journal_mode = WAL');   // WAL needs write access; skip for read-only
+    db.exec('PRAGMA busy_timeout = 5000');
+  }
   return new NodeSqliteAdapter(db);
 }
 
@@ -152,11 +156,22 @@ export function openBetterSqlite(path: string): SqliteAdapter {
 }
 
 /**
- * Create an in-memory SQLite adapter (better-sqlite3) for unit tests. Data is
+ * Create an in-memory SQLite adapter (the default node:sqlite backend) for unit
+ * tests. No native dependency, so the suite runs without better-sqlite3. Data is
  * lost when the process exits. Not for production use.
  */
-export function createTestAdapter(): SqliteAdapter {
-  return new SqliteAdapter(new (loadBetterSqlite())(':memory:'));
+export function createTestAdapter(): NodeSqliteAdapter {
+  return openSqlite(':memory:');
+}
+
+/** True when better-sqlite3 is installed (an optional peer); tests that need it skip otherwise. */
+export function betterSqliteAvailable(): boolean {
+  try {
+    nodeRequire.resolve('better-sqlite3');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

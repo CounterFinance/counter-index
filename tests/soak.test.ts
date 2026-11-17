@@ -7,10 +7,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 
@@ -44,7 +43,7 @@ function streamSource(tally: Map<string, bigint>): EventSource {
 describe('soak correctness at scale', () => {
   it(`stays correct over ${EVENTS.toLocaleString()} events`, async () => {
     const tally = new Map<string, bigint>();
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source: streamSource(tally) });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter(), source: streamSource(tally) });
     indexer.on('T', async (e, ctx) => {
       const to = e.decoded!['to'] as string;
       const cur = await ctx.store.get('Balance', to);

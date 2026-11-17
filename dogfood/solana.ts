@@ -7,10 +7,9 @@
  *   npx tsx dogfood/solana.ts
  */
 
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { openSqlite } from '../src/adapter.js';
 import {
   SolanaDecoder, anchorEventDiscriminator, SolanaLogSource, BorshWriter, base58Encode, type SolanaTx,
 } from '../src/chains/solana/index.js';
@@ -42,7 +41,7 @@ async function main(): Promise<void> {
     fetchSlots: async function* (from, to) { for (const t of txs) if (t.slot >= from && t.slot <= to) yield t; },
   });
 
-  const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source });
+  const indexer = await createIndexer({ schema, sink: openSqlite(':memory:'), source });
   indexer.on('TransferEvent', async (e, ctx) => {
     const d = e.decoded!;
     const amount = d['amount'] as bigint;

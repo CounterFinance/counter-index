@@ -5,10 +5,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 import type { EventSource, EventSourceFilters, UnsubscribeFn } from '../src/source.js';
 
@@ -35,7 +34,7 @@ function staticSource(events: ChainEvent[]): EventSource {
 describe('health() through a sync', () => {
   it('goes starting → backfilling → live as it catches the tip', async () => {
     const source = staticSource([evt(1, 'a'), evt(2, 'b'), evt(3, 'c')]);
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter(), source });
     indexer.on('E', async (e, ctx) => { await ctx.store.set('Thing', e.txHash, { v: e.blockNumber }); });
 
     expect(indexer.health().state).toBe('starting');
@@ -47,7 +46,7 @@ describe('health() through a sync', () => {
 
   it('counts a reorg via rollbackTo', async () => {
     const indexer = await createIndexer({
-      schema, sink: new SqliteAdapter(new Database(':memory:')), reorg: { finalityDepth: 10 },
+      schema, sink: createTestAdapter(), reorg: { finalityDepth: 10 },
     });
     expect(indexer.stats.reorgs).toBe(0);
     await indexer.rollbackTo(0, 0);
@@ -58,14 +57,14 @@ describe('health() through a sync', () => {
 
 describe('graceful shutdown', () => {
   it('stops the subscription, closes server + DB, runs hooks, reports stopped', async () => {
-    const db = new Database(':memory:');
+    const adapter = createTestAdapter();
     const unsub = vi.fn();
     const source = {
       async *queryStream() { /* empty */ },
       subscribe: vi.fn((): UnsubscribeFn => unsub),
     } as unknown as EventSource;
 
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(db), source });
+    const indexer = await createIndexer({ schema, sink: adapter, source });
     const hook = vi.fn();
     indexer.onShutdown(hook);
 
@@ -78,14 +77,14 @@ describe('graceful shutdown', () => {
     expect(unsub).toHaveBeenCalledTimes(1);     // subscription stopped
     expect(hook).toHaveBeenCalledTimes(1);      // cleanup hook ran
     expect(indexer.health().state).toBe('stopped');
-    expect(db.open).toBe(false);                // sink DB closed
+    expect(adapter.rawDb.isOpen).toBe(false);   // sink DB closed
 
     // Server is closed — a request should now fail to connect.
     await expect(fetch('http://localhost:47915/health')).rejects.toBeDefined();
   });
 
   it('is idempotent — a second shutdown is a no-op', async () => {
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter() });
     const hook = vi.fn();
     indexer.onShutdown(hook);
     await indexer.shutdown();

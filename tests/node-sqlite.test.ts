@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { openSqlite, createTestAdapter, type MinimalDbAdapter } from '../src/adapter.js';
+import { openSqlite, openBetterSqlite, betterSqliteAvailable, type MinimalDbAdapter } from '../src/adapter.js';
 import { createStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
 
@@ -32,17 +32,23 @@ async function runStoreSurface(adapter: MinimalDbAdapter) {
 }
 
 describe('NodeSqliteAdapter (node:sqlite, no native dependency)', () => {
-  it('matches better-sqlite3 across the store surface', async () => {
+  it('runs the full store surface correctly', async () => {
     const onNode = await runStoreSurface(openSqlite(':memory:'));
-    const onBetter = await runStoreSurface(createTestAdapter());
-    expect(onNode).toEqual(onBetter);               // drop-in parity
-
-    // absolute sanity (not just "both wrong the same way")
     expect(onNode.count).toBe(2);
     expect(onNode.get).toMatchObject({ id: 'a', holder: '0xA', amount: 150n, rank: 1 });
     expect(typeof (onNode.get as Record<string, unknown>)['amount']).toBe('bigint');
     expect(onNode.queryAsc).toEqual(['a', 'b']);     // amount >= 150, asc: a(150), b(300)
+    expect(onNode.contains).toEqual(['a', 'b']);
     expect(onNode.countWhere).toBe(2);
+    expect(onNode.list).toEqual(['a', 'b']);
+  });
+
+  // Cross-check node:sqlite against the mature better-sqlite3 driver when it is
+  // installed (an optional peer); skipped in a native-free dev/publish env.
+  it.skipIf(!betterSqliteAvailable())('matches better-sqlite3 exactly across the store surface', async () => {
+    const onNode = await runStoreSurface(openSqlite(':memory:'));
+    const onBetter = await runStoreSurface(openBetterSqlite(':memory:'));
+    expect(onNode).toEqual(onBetter);               // drop-in parity
   });
 
   it('commits and rolls back transactions like SqliteAdapter', async () => {

@@ -7,8 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { OpnetChainMeta } from '../src/chains/opnet/types.js';
-import Database from 'better-sqlite3';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { DbEventSource } from '../src/chains/opnet/dbSource.js';
 
 async function collect<T>(iter: AsyncIterable<T>): Promise<T[]> {
@@ -50,7 +49,8 @@ const OPSTREAM_SCHEMA = `
 `;
 
 function makeSourceAdapter() {
-  const db = new Database(':memory:');
+  const adapter = createTestAdapter();
+  const db = adapter.rawDb;
   db.exec(OPSTREAM_SCHEMA);
 
   // Seed blocks
@@ -78,7 +78,7 @@ function makeSourceAdapter() {
   db.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(101, '0xtx3', '0xtoken2', 'Transferred', 0, emptyBlob, 0);
 
-  return new SqliteAdapter(db);
+  return adapter;
 }
 
 let source: DbEventSource;
@@ -140,7 +140,8 @@ describe('DbEventSource.query', () => {
 
   it('normalises a 32-byte hex pubkey from_address to bech32m fromAddress', async () => {
     // Seed a separate in-memory DB with a 64-char hex pubkey as from_address
-    const db2 = new Database(':memory:');
+    const adapter2 = createTestAdapter();
+    const db2 = adapter2.rawDb;
     db2.exec(OPSTREAM_SCHEMA);
     const HEX_PUBKEY = '0'.repeat(64);
     db2.prepare(`INSERT INTO blocks (block_number, block_hash, timestamp) VALUES (?, ?, ?)`)
@@ -149,7 +150,7 @@ describe('DbEventSource.query', () => {
       .run('0xtx_pub', 200, 0, HEX_PUBKEY, '0xtoken', '0', '0', 0);
     db2.prepare(`INSERT INTO events (block_number, tx_hash, contract_address, event_name, log_index, event_raw, data_length) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(200, '0xtx_pub', '0xtoken', 'Transferred', 0, new Uint8Array(0), 0);
-    const src2 = new DbEventSource(new SqliteAdapter(db2));
+    const src2 = new DbEventSource(adapter2);
     const events = await collect(src2.queryStream(200, 200));
     expect((events[0]!.chainMeta as OpnetChainMeta).fromAddress).toMatch(/^op1/);
     expect((events[0]!.chainMeta as OpnetChainMeta).fromAddressPubkey).toBe(HEX_PUBKEY);

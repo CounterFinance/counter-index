@@ -4,10 +4,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { defineCandles, candleEntity, candleBucket } from '../src/candles.js';
 import type { ChainEvent } from '../src/types.js';
 
@@ -31,7 +30,7 @@ describe('defineCandles', () => {
   });
 
   it('builds correct OHLCV per 1m bucket from a trade stream', async () => {
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter() });
     defineCandles(indexer, {
       entity: 'Candle1m', on: 'Swap', intervalSec: 60,
       price: (e) => e.decoded!['price'] as number,
@@ -60,7 +59,7 @@ describe('defineCandles', () => {
   });
 
   it('skips events without a block timestamp', async () => {
-    const indexer = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')) });
+    const indexer = await createIndexer({ schema, sink: createTestAdapter() });
     defineCandles(indexer, { entity: 'Candle1m', on: 'Swap', intervalSec: 60, price: () => 1 });
     const e = swap(1, 0, 1, 1); delete (e as { blockTimestamp?: number }).blockTimestamp;
     await indexer.processEvents([e]);

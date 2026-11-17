@@ -6,10 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import Database from 'better-sqlite3';
 import { createStore, type EntityStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 
 const schema = defineSchema({
   Balance: { holder: { type: 'string' }, amount: { type: 'bigint' } },
@@ -18,7 +17,7 @@ const schema = defineSchema({
 const CHAIN = 1;
 
 async function newStore(): Promise<EntityStore> {
-  const store = await createStore(schema, new SqliteAdapter(new Database(':memory:')));
+  const store = await createStore(schema, createTestAdapter());
   store.enableReorg(50);
   return store;
 }

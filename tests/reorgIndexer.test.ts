@@ -6,10 +6,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 import { DeepReorgError } from '../src/store.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 import type { ChainEvent } from '../src/types.js';
@@ -50,7 +49,7 @@ describe('indexer automatic reorg recovery', () => {
   it('rolls back an orphaned tip and converges to the canonical state', async () => {
     const { source, done } = reorgSource();
     const indexer = await createIndexer({
-      schema, sink: new SqliteAdapter(new Database(':memory:')), source, reorg: { finalityDepth: 5 },
+      schema, sink: createTestAdapter(), source, reorg: { finalityDepth: 5 },
     });
     indexer.on('Set', async (event, ctx) => {
       const d = event.decoded!;
@@ -92,7 +91,7 @@ describe('indexer automatic reorg recovery', () => {
 
     let caught: DeepReorgError | undefined;
     const indexer = await createIndexer({
-      schema, sink: new SqliteAdapter(new Database(':memory:')), source,
+      schema, sink: createTestAdapter(), source,
       reorg: { finalityDepth: 2 }, onDeepReorg: (e) => { caught = e; },
     });
     indexer.on('Set', async (event, ctx) => {

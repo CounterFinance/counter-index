@@ -5,10 +5,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import Database from 'better-sqlite3';
 import { createIndexer } from '../src/indexer.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter, type MinimalDbAdapter } from '../src/adapter.js';
 import type { EventSource, DynamicSource, UnsubscribeFn } from '../src/source.js';
 import type { ChainEvent } from '../src/types.js';
 
@@ -44,8 +43,8 @@ const EVENTS = [
   ev(2, POOL, 'Swap', { amount: '5' }),
 ];
 
-let sink: SqliteAdapter;
-beforeEach(() => { sink = new SqliteAdapter(new Database(':memory:')); });
+let sink: MinimalDbAdapter;
+beforeEach(() => { sink = createTestAdapter(); });
 
 describe('onFactory', () => {
   it('discovers a child, watches it, and indexes its events', async () => {

@@ -7,10 +7,9 @@
 
 import { describe, it } from 'vitest';
 import fc from 'fast-check';
-import Database from 'better-sqlite3';
 import { createStore, type EntityStore } from '../src/store.js';
 import { defineSchema, type Schema, type SchemaDefinition } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter } from '../src/adapter.js';
 
 const schema = defineSchema({ E: { n: { type: 'int' } } }) as Schema<SchemaDefinition>;
 
@@ -23,7 +22,7 @@ const opArb = fc.record({
 });
 
 async function freshStore(reorg: boolean): Promise<EntityStore> {
-  const store = await createStore(schema, new SqliteAdapter(new Database(':memory:')));
+  const store = await createStore(schema, createTestAdapter());
   if (reorg) store.enableReorg(1000);
   return store;
 }

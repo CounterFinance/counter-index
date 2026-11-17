@@ -13,13 +13,11 @@
  * correct new derived state.
  */
 
-import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { createIndexer, createCachedSource, openSqlite } from '../src/index.js';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
 import type { ChainEvent } from '../src/types.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 
@@ -55,7 +53,7 @@ async function main(): Promise<void> {
     // ---- Run 1: cold. Pays the network cost once, fills the cache. ----
     const slow1 = new SlowSource();
     const cache1 = await createCachedSource(slow1, { path: cacheFile });
-    const ix1 = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source: cache1 });
+    const ix1 = await createIndexer({ schema, sink: openSqlite(':memory:'), source: cache1 });
     let count = 0;
     ix1.on('Transfer', async (_e, ctx) => { count++; await ctx.store.set('Stat', 'transfers', { count }); });
     const t1 = Date.now();
@@ -66,7 +64,7 @@ async function main(): Promise<void> {
     // ---- Run 2: simulate editing the handler + restarting. Same cache file, fresh sink. ----
     const slow2 = new SlowSource();
     const cache2 = await createCachedSource(slow2, { path: cacheFile });   // reopens the SAME on-disk cache
-    const ix2 = await createIndexer({ schema, sink: new SqliteAdapter(new Database(':memory:')), source: cache2 });
+    const ix2 = await createIndexer({ schema, sink: openSqlite(':memory:'), source: cache2 });
     // New handler: track running balances instead of just counting.
     ix2.on('Transfer', async (e, ctx) => {
       const to = e.decoded!['to'] as string, value = e.decoded!['value'] as bigint;

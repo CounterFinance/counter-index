@@ -4,8 +4,23 @@ All notable changes to `@counterfinance/counter-index` are documented here.
 
 ---
 
-## [0.2.1] - 2026-11-16
-- release: 0.2.1 (#10)
+## [0.2.1] - 2026-11-17
+
+### Added
+
+- Fast dev loop: a persistent event cache (`createCachedSource`) so edit-restart-resync replays without re-fetching from the chain.
+- `counter-index dev <entry>` CLI (watch + fast reload), checkpoint-based incremental replay (`devResumeFrom`), and a clean handler-error printer (`devOnError`).
+- `openSqlite` now runs on Node's built-in `node:sqlite` by default: no native dependency, no compile step, clean install. The better-sqlite3 native driver stays available via `openBetterSqlite` (optional peer dependency).
+- `openSqlite(path, { readOnly })` to open an existing SQLite file read-only.
+
+### Changed
+
+- Shared `hexToBytes` across chain adapters; within-range dependency refresh (viem 2.57, etc.).
+- better-sqlite3 is now fully optional: removed from both `dependencies` and `devDependencies` (it stays an optional peer dependency only). The test suite and every dogfood run on `node:sqlite`, so a clean `npm install` pulls no native binary and needs no install-script approval.
+
+### Fixed
+
+- Added a SQL vs JS filter-operator parity test (keeps REST/GraphQL and SSE results identical) and de-flaked the oversized-body (413) security test.
 
 
 ## [0.2.0] - 2026-11-13

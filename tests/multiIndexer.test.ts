@@ -4,9 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import Database from 'better-sqlite3';
 import { defineSchema } from '../src/schema.js';
-import { SqliteAdapter } from '../src/adapter.js';
+import { createTestAdapter, type MinimalDbAdapter } from '../src/adapter.js';
 import { createMultiIndexer } from '../src/multiIndexer.js';
 import type { EventSource, UnsubscribeFn } from '../src/source.js';
 import type { ChainEvent } from '../src/types.js';
@@ -33,9 +32,9 @@ const schema = defineSchema({
   TokenHolder: { holder: { type: 'string' }, balance: { type: 'bigint' } },
 }, { multichain: true });
 
-let sink: SqliteAdapter;
+let sink: MinimalDbAdapter;
 
-beforeEach(() => { sink = new SqliteAdapter(new Database(':memory:')); });
+beforeEach(() => { sink = createTestAdapter(); });
 
 describe('createMultiIndexer', () => {
   it('indexes two chains into one store, isolated by chainId', async () => {
@@ -110,8 +109,8 @@ describe('createMultiIndexer', () => {
     const makeMi = (useOwnSinks: boolean) => createMultiIndexer({
       schema, sink,
       sources: [
-        { source: delayedSource(1), chainId: 1, fromBlock: 1, toBlock: 1, sink: useOwnSinks ? new SqliteAdapter(new Database(':memory:')) : undefined },
-        { source: delayedSource(2), chainId: 2, fromBlock: 1, toBlock: 1, sink: useOwnSinks ? new SqliteAdapter(new Database(':memory:')) : undefined },
+        { source: delayedSource(1), chainId: 1, fromBlock: 1, toBlock: 1, sink: useOwnSinks ? createTestAdapter() : undefined },
+        { source: delayedSource(2), chainId: 2, fromBlock: 1, toBlock: 1, sink: useOwnSinks ? createTestAdapter() : undefined },
       ],
     });
 
